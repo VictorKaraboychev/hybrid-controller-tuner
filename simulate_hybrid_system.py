@@ -18,6 +18,50 @@ import numpy as np
 from scipy import signal
 
 
+def pid_to_discrete_tf(kp, ki, kd, Ts, method='tustin'):
+    """
+    Convert continuous PID gains to a discrete controller D[z].
+
+    Parameters:
+    -----------
+    kp : float
+        Proportional gain
+    ki : float
+        Integral gain
+    kd : float
+        Derivative gain
+    Ts : float
+        Sampling time
+    method : str
+        Discretization method. Currently supports 'tustin'.
+
+    Returns:
+    --------
+    tuple : (num, den) discrete-time transfer function coefficients
+    """
+    if method.lower() != 'tustin':
+        raise ValueError("Only Tustin method is currently supported for PID discretization.")
+
+    # Continuous PID: C(s) = kp + ki/s + kd*s
+    # Using Tustin transformation: s = (2/Ts) * (z-1)/(z+1)
+    # C(z) = kp + ki*Ts*(z+1)/(2*(z-1)) + kd*(2/Ts)*(z-1)/(z+1)
+    # Put over common denominator (z-1)(z+1) = z^2 - 1
+
+    b0 = kp + ki*Ts/2 + 2*kd/Ts
+    b1 = ki*Ts - 4*kd/Ts
+    b2 = -kp + ki*Ts/2 + 2*kd/Ts
+
+    # Denominator: z^2 - 1 = z^2 + 0*z - 1
+    a0 = 1.0
+    a1 = 0.0
+    a2 = -1.0
+
+    num = np.array([b0, b1, b2], dtype=float)
+    den = np.array([a0, a1, a2], dtype=float)
+
+    return (num, den)
+
+
 def simulate_hybrid_step_response(controller_tf, plant_tf, sampling_time, t_end=10.0, step_amplitude=1.0):
     """
     Simulate step response of a hybrid control system.
@@ -289,12 +333,12 @@ if __name__ == "__main__":
     """
     import matplotlib.pyplot as plt
     
-    # Example: Simple proportional controller D[z] = kP
-    # For a proportional controller: D[z] = kP = kP/1
-    kP = -10.0
-    controller_num = [kP]  # D[z] = kP
-    controller_den = [1.0]
-    controller_tf = (controller_num, controller_den)
+    # Example: PID controller (kP, kI, kD)
+    kP = -8.0
+    kI = 0.0
+    kD = 0.0
+    sampling_time = 0.015
+    controller_tf = pid_to_discrete_tf(kP, kI, kD, sampling_time)
     
     # Example plant: P(s) = -2.936 / (0.031*s^2 + s)
     plant_num = [-2.936]
@@ -302,12 +346,11 @@ if __name__ == "__main__":
     plant_tf = (plant_num, plant_den)
     
     # Simulation parameters
-    sampling_time = 0.015
     t_end = 5.0
     
     # Simulate
     print("Simulating hybrid system...")
-    print(f"Controller: D[z] = {kP}")
+    print(f"Controller gains: kP={kP}, kI={kI}, kD={kD}")
     print(f"Plant: P(s) = {plant_num[0]} / ({plant_den[0]}*s^2 + {plant_den[1]}*s)")
     print(f"Sampling time: {sampling_time} s")
     
