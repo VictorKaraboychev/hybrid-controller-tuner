@@ -235,7 +235,7 @@ def tune_discrete_controller(
 
         # Weighted sum cost
         cost = (
-            5.0 * overshoot_penalty
+            1.0 * overshoot_penalty
             + 2.0 * settling_penalty
             + 3.0 * steady_state_error
             + specs.control_signal_weight * control_signal_cost

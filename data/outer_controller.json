@@ -1,0 +1,34 @@
+{
+  "controller": {
+    "numerator": [
+      -1.7373838589031656,
+      1.737383858905189
+    ],
+    "denominator": [
+      1.0,
+      -0.7970585470249199,
+      0.24939703006126068
+    ]
+  },
+  "structure": {
+    "num_order": 1,
+    "den_order": 2
+  },
+  "metrics": {
+    "steady_state": 1.0000000000000004,
+    "percent_overshoot": 1.1045451166695526,
+    "settling_time_2pct": 4.0,
+    "peak_value": 1.011045451166696
+  },
+  "plant": {
+    "numerator": [
+      -0.258873
+    ],
+    "denominator": [
+      1.0,
+      0.0,
+      0.0
+    ]
+  },
+  "sampling_time": 0.5
+}

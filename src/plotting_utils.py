@@ -87,11 +87,16 @@ def plot_hybrid_response(
     axes[0].set_title("Step Response - Output")
     axes[0].legend(loc="best")
 
-    axes[1].plot(t, u, "g-", linewidth=2, label="Control u[k] (after ZOH)")
+    # Plot control signal as ZOH (step function) - constant between samples
+    # Create step-like plot for ZOH representation
+    t_zoh = np.repeat(t, 2)[1:]  # Duplicate time points for step
+    u_zoh = np.repeat(u, 2)[:-1]  # Duplicate u values for step
+    axes[1].plot(t_zoh, u_zoh, "g-", linewidth=2, label="Control u[k] (ZOH)", drawstyle="steps-post")
+    axes[1].plot(t, u, "go", markersize=4, alpha=0.6, label="Sampled u[k]")
     axes[1].grid(True, alpha=0.3)
     axes[1].set_xlabel("Time (s)")
     axes[1].set_ylabel("Control Signal")
-    axes[1].set_title("Control Signal")
+    axes[1].set_title("Control Signal (Zero-Order Hold)")
     axes[1].legend()
 
     axes[2].plot(t, e, "r-", linewidth=2, label="Error e(t) = r(t) - y(t)")

@@ -1,0 +1,27 @@
+{
+	"plant": {
+		"numerator": [
+			-2.936
+		],
+		"denominator": [
+			0.031,
+			1.0,
+			0.0
+		]
+	},
+	"sampling_time": 0.015,
+	"specs": {
+		"max_overshoot_pct": 5.0,
+		"settling_time_2pct": 0.05,
+		"control_signal_weight": 0.0
+	},
+	"t_end": 1.0,
+	"popsize": 20,
+	"maxiter": 100,
+	"num_order": 1,
+	"den_order": 2,
+	"quiet": false,
+	"show": false,
+	"save_path": "data/inner_response.png",
+	"output_json": "data/inner_controller.json"
+}

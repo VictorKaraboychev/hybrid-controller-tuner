@@ -1,0 +1,27 @@
+{
+	"plant": {
+		"numerator": [
+			-0.258873
+		],
+		"denominator": [
+			1.0,
+			0.0,
+			0.0
+		]
+	},
+	"sampling_time": 0.5,
+	"specs": {
+		"max_overshoot_pct": 45.0,
+		"settling_time_2pct": 4.0,
+		"control_signal_weight": 0.0
+	},
+	"t_end": 30.0,
+	"popsize": 20,
+	"maxiter": 300,
+	"num_order": 1,
+	"den_order": 2,
+	"quiet": false,
+	"show": false,
+	"save_path": "data/outer_response.png",
+	"output_json": "data/outer_controller.json"
+}

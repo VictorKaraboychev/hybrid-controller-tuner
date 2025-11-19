@@ -219,21 +219,11 @@ def simulate_hybrid_step_response(
     elif len(y) > len(t):
         y = y[: len(t)]
 
-    # If saturation constraints are provided, we need to simulate step-by-step
-    # to properly account for saturation in the feedback loop
-    if u_min is not None or u_max is not None:
-        t, y, u, e = _simulate_with_saturation(
-            controller_tf, plant_tf, sampling_time, t_end, step_amplitude, u_min, u_max
-        )
-    else:
-        # Original closed-loop transfer function approach (no saturation)
-        # Calculate error signal e(t) = r(t) - y(t)
-        r = np.ones_like(t) * step_amplitude  # Step reference
-        e = r - y
-
-        # Calculate control signal u[k] = D[z]e[k]
-        # We need to simulate the controller with the error signal
-        u = _simulate_controller_output(D_num, D_den, e, Ts)
+    # Always use step-by-step simulation to properly compute u[k] in the feedback loop
+    # This ensures the control signal is computed correctly and affects the plant output
+    t, y, u, e = _simulate_step_by_step(
+        controller_tf, plant_tf, sampling_time, t_end, step_amplitude, u_min, u_max
+    )
 
     # Check for instability
     if len(y) > 50:
@@ -306,12 +296,12 @@ def _simulate_discrete_step(num, den, n_samples):
     return y
 
 
-def _simulate_with_saturation(
-    controller_tf, plant_tf, sampling_time, t_end, step_amplitude, u_min, u_max
+def _simulate_step_by_step(
+    controller_tf, plant_tf, sampling_time, t_end, step_amplitude, u_min=None, u_max=None
 ):
     """
-    Simulate hybrid system with control signal saturation constraints.
-    This uses step-by-step simulation to properly account for saturation in the feedback loop.
+    Simulate hybrid system step-by-step to properly compute control signal in feedback loop.
+    This ensures u[k] is computed and applied correctly, with optional saturation constraints.
 
     Parameters:
     -----------
@@ -383,22 +373,34 @@ def _simulate_with_saturation(
         D_num = D_num / D_den[0]
         D_den = D_den / D_den[0]
 
-    # Reverse for difference equation
-    num_rev = np.flip(D_num)
-    den_rev = np.flip(D_den)[1:]  # Skip leading 1
-
-    # Controller state: past inputs and outputs
-    controller_input_history = np.zeros(len(num_rev))
-    controller_output_history = np.zeros(len(den_rev))
+    # For difference equation: D[z] = num(z)/den(z)
+    # If num = [b0, b1, b2, ...] and den = [a0=1, a1, a2, ...] (descending powers)
+    # Then: u[k] = b0*e[k] + b1*e[k-1] + ... - a1*u[k-1] - a2*u[k-2] - ...
+    # We need to store past values: e[k], e[k-1], ... and u[k-1], u[k-2], ...
+    # No need to flip - use coefficients directly with proper indexing
+    
+    # Controller state: past inputs (errors) and outputs (control signals)
+    # For numerator of order n: need e[k], e[k-1], ..., e[k-n]
+    # For denominator of order m: need u[k-1], u[k-2], ..., u[k-m] (skip u[k] since a0=1)
+    num_order = len(D_num) - 1
+    den_order = len(D_den) - 1
+    controller_input_history = np.zeros(num_order + 1)  # e[k], e[k-1], ..., e[k-n]
+    controller_output_history = np.zeros(den_order)  # u[k-1], u[k-2], ..., u[k-m]
 
     # Plant state (state-space)
     x_plant = np.zeros((A_d.shape[0],))
 
     # Simulate step-by-step
-    u_prev = 0.0  # Previous control input (for initial output calculation)
+    # Standard discrete-time control loop:
+    # At time k: measure y[k], compute e[k], compute u[k], apply u[k] to get x[k+1]
+    # For the first iteration: y[0] = C*x[0] = 0, e[0] = r[0], u[0] = controller(e[0])
+    
     for k in range(n_samples):
-        # Calculate output from current state using previous control input
-        # y[k] = C*x[k] + D*u[k-1] (using u_prev, or 0 for k=0)
+        # At time k: we have state x[k] from previous iteration (or initial state x[0]=0)
+        # Calculate output: y[k] = C*x[k] + D*u[k-1]
+        # For k=0: u[-1] = 0, so y[0] = C*x[0] = 0
+        # For k>0: use u[k-1] from previous iteration
+        u_prev = u[k-1] if k > 0 else 0.0
         y_plant = C_d @ x_plant
         if D_d.size > 0 and np.any(D_d != 0):
             if D_d.ndim > 1:
@@ -407,16 +409,26 @@ def _simulate_with_saturation(
                 y_plant = y_plant + D_d * u_prev
         y[k] = y_plant.flatten()[0] if y_plant.size > 0 else 0.0
 
-        # Calculate error
+        # Calculate error: e[k] = r[k] - y[k]
         e[k] = r[k] - y[k]
 
         # Update controller input history (shift and add new error)
+        # Shift: e[k-1] -> e[k-2], e[k-2] -> e[k-3], etc.
         controller_input_history = np.roll(controller_input_history, 1)
-        controller_input_history[0] = e[k]
+        controller_input_history[0] = e[k]  # Most recent error at index 0
 
         # Compute controller output: u[k] = D[z]e[k]
-        u_num = np.sum(num_rev * controller_input_history[: len(num_rev)])
-        u_den = np.sum(den_rev * controller_output_history[: len(den_rev)])
+        # u[k] = b0*e[k] + b1*e[k-1] + ... - a1*u[k-1] - a2*u[k-2] - ...
+        # D_num = [b0, b1, b2, ...] (descending powers)
+        # controller_input_history = [e[k], e[k-1], e[k-2], ...]
+        u_num = np.sum(D_num * controller_input_history[: len(D_num)])
+        
+        # D_den = [1, a1, a2, ...] (skip leading 1, use a1, a2, ...)
+        # controller_output_history = [u[k-1], u[k-2], ...]
+        if len(D_den) > 1:
+            u_den = np.sum(D_den[1:] * controller_output_history[: len(D_den) - 1])
+        else:
+            u_den = 0.0
         u_unsat = u_num - u_den
 
         # Apply saturation
@@ -437,9 +449,6 @@ def _simulate_with_saturation(
         else:
             u_input = B_d * u[k]
         x_plant = A_d @ x_plant + u_input
-
-        # Store u[k] for next iteration
-        u_prev = u[k]
 
         # Check for instability
         if k > 10 and (np.abs(y[k]) > 1e8 or np.abs(u[k]) > 1e8):

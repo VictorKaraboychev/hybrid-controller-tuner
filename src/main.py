@@ -4,9 +4,9 @@ Command-line entry point for tuning and simulating the hybrid control loop.
 
 from __future__ import annotations
 
-import argparse
+import json
 from pathlib import Path
-from typing import Sequence, Tuple
+from typing import Any, Sequence, Tuple
 
 import numpy as np
 
@@ -20,161 +20,116 @@ from src.tune_discrete_controller import (
 )
 
 
-def _parse_coeffs(text: str) -> Sequence[float]:
-    return [float(token.strip()) for token in text.split(",") if token.strip()]
+def load_specs_from_json(json_path: Path) -> dict[str, Any]:
+    """Load tuning specifications from a JSON file."""
+    with open(json_path, "r") as f:
+        return json.load(f)
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Tune a discrete controller and visualize the hybrid closed-loop response."
-    )
-    parser.add_argument(
-        "--plant-num",
-        type=str,
-        default="-2.936",
-        help="Comma-separated plant numerator coefficients (continuous-time).",
-    )
-    parser.add_argument(
-        "--plant-den",
-        type=str,
-        default="0.031,1,0",
-        help="Comma-separated plant denominator coefficients (continuous-time).",
-    )
-    parser.add_argument(
-        "--sampling-time",
-        type=float,
-        default=0.015,
-        help="Controller sampling time (s).",
-    )
-    parser.add_argument(
-        "--max-overshoot",
-        type=float,
-        default=10.0,
-        help="Maximum allowed percent overshoot for tuning.",
-    )
-    parser.add_argument(
-        "--settling-time",
-        type=float,
-        default=1.5,
-        help="Maximum 2%% settling time (s) for tuning.",
-    )
-    parser.add_argument(
-        "--control-signal-weight",
-        type=float,
-        default=0.0,
-        help="Weight for minimizing control signal magnitude in cost function. Higher values prioritize smaller control signals. Default: 0.0 (disabled).",
-    )
-    parser.add_argument(
-        "--num-order",
-        type=int,
-        default=1,
-        help="Discrete controller numerator order (degree). Must be < den-order for strict properness. Ignored if --search-orders is used.",
-    )
-    parser.add_argument(
-        "--den-order",
-        type=int,
-        default=2,
-        help="Discrete controller denominator order (degree). Must be > num-order for strict properness. Ignored if --search-orders is used.",
-    )
-    parser.add_argument(
-        "--search-orders",
-        action="store_true",
-        help="Search over different combinations of numerator and denominator orders to find the best structure.",
-    )
-    parser.add_argument(
-        "--num-order-min",
-        type=int,
-        default=1,
-        help="Minimum numerator order when using --search-orders. Default: 0",
-    )
-    parser.add_argument(
-        "--num-order-max",
-        type=int,
-        default=5,
-        help="Maximum numerator order when using --search-orders. Default: 3",
-    )
-    parser.add_argument(
-        "--den-order-min",
-        type=int,
-        default=2,
-        help="Minimum denominator order when using --search-orders. Default: 1",
-    )
-    parser.add_argument(
-        "--den-order-max",
-        type=int,
-        default=6,
-        help="Maximum denominator order when using --search-orders. Default: 4",
-    )
-    parser.add_argument(
-        "--t-end", type=float, default=5.0, help="Simulation horizon (s)."
-    )
-    parser.add_argument("--step", type=float, default=1.0, help="Step amplitude.")
-    parser.add_argument(
-        "--popsize",
-        type=int,
-        default=10,
-        help="Population size for differential evolution.",
-    )
-    parser.add_argument(
-        "--maxiter",
-        type=int,
-        default=30,
-        help="Maximum iterations for differential evolution.",
-    )
-    parser.add_argument(
-        "--bound-mag",
-        type=float,
-        default=2.0,
-        help="Magnitude for symmetric coefficient bounds [-M, M].",
-    )
-    parser.add_argument(
-        "--random-state", type=int, default=42, help="Random seed for reproducibility."
-    )
-    parser.add_argument(
-        "--save-path",
-        type=Path,
-        default=Path("hybrid_system_response.png"),
-        help="Path to save the annotated plot.",
-    )
-    parser.add_argument(
-        "--show",
-        action="store_true",
-        help="Display the plot window after tuning.",
-    )
-    parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Suppress optimizer progress output.",
-    )
-    return parser
+def save_controller_to_json(
+    output_path: Path,
+    num: np.ndarray,
+    den: np.ndarray,
+    metrics: dict,
+    num_order: int | None = None,
+    den_order: int | None = None,
+    plant_tf: Tuple[Sequence[float], Sequence[float]] | None = None,
+    sampling_time: float | None = None,
+) -> None:
+    """Save controller results to a JSON file."""
+    result = {
+        "controller": {
+            "numerator": num.tolist() if isinstance(num, np.ndarray) else list(num),
+            "denominator": den.tolist() if isinstance(den, np.ndarray) else list(den),
+        },
+        "structure": {},
+        "metrics": {},
+    }
+
+    if num_order is not None:
+        result["structure"]["num_order"] = num_order
+    if den_order is not None:
+        result["structure"]["den_order"] = den_order
+
+    # Convert metrics to JSON-serializable format
+    for key, value in metrics.items():
+        if np.isfinite(value):
+            result["metrics"][key] = float(value)
+        else:
+            result["metrics"][key] = None
+
+    # Add plant and sampling info if provided
+    if plant_tf is not None:
+        result["plant"] = {
+            "numerator": list(plant_tf[0]),
+            "denominator": list(plant_tf[1]),
+        }
+    if sampling_time is not None:
+        result["sampling_time"] = sampling_time
+
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=2)
 
 
 def main():
-    args = build_arg_parser().parse_args()
+    # Always read from data/specs.json
+    specs_path = Path("data/specs.json")
+    if not specs_path.exists():
+        raise FileNotFoundError(
+            f"Specs file not found: {specs_path}. Please create data/specs.json with tuning specifications."
+        )
 
-    plant_tf = (_parse_coeffs(args.plant_num), _parse_coeffs(args.plant_den))
-    specs = PerformanceSpecs(
-        max_overshoot_pct=args.max_overshoot,
-        settling_time_2pct=args.settling_time,
-        control_signal_weight=args.control_signal_weight,
+    json_data = load_specs_from_json(specs_path)
+
+    # Extract plant transfer function
+    plant_tf = (
+        json_data["plant"]["numerator"],
+        json_data["plant"]["denominator"],
     )
 
-    if args.search_orders:
+    # Extract performance specs
+    specs = PerformanceSpecs(
+        max_overshoot_pct=json_data["specs"]["max_overshoot_pct"],
+        settling_time_2pct=json_data["specs"]["settling_time_2pct"],
+        control_signal_weight=json_data["specs"].get("control_signal_weight", 0.0),
+    )
+
+    # Extract tuning parameters
+    sampling_time = json_data["sampling_time"]
+    t_end = json_data.get("t_end", 5.0)
+    step_amplitude = json_data.get("step_amplitude", 1.0)
+    popsize = json_data.get("popsize", 25)
+    maxiter = json_data.get("maxiter", 60)
+    random_state = json_data.get("random_state", None)
+    bound_mag = json_data.get("bound_mag", 2.0)
+    search_orders = json_data.get("search_orders", False)
+    num_order = json_data.get("num_order", 1)
+    den_order = json_data.get("den_order", 2)
+    num_order_min = json_data.get("num_order_min", 1)
+    num_order_max = json_data.get("num_order_max", 5)
+    den_order_min = json_data.get("den_order_min", 2)
+    den_order_max = json_data.get("den_order_max", 6)
+    verbose = not json_data.get("quiet", False)
+    output_json_path = json_data.get("output_json", "data/controller.json")
+    save_path = Path(json_data.get("save_path", "hybrid_system_response.png"))
+    show_plot = json_data.get("show", False)
+
+    if search_orders:
         # Search over different order combinations
         num, den, metrics, best_num_order, best_den_order = (
             tune_discrete_controller_with_order_search(
                 plant_tf=plant_tf,
-                sampling_time=args.sampling_time,
+                sampling_time=sampling_time,
                 specs=specs,
-                num_order_range=(args.num_order_min, args.num_order_max),
-                den_order_range=(args.den_order_min, args.den_order_max),
-                t_end=args.t_end,
-                step_amplitude=args.step,
+                num_order_range=(num_order_min, num_order_max),
+                den_order_range=(den_order_min, den_order_max),
+                t_end=t_end,
+                step_amplitude=step_amplitude,
                 bounds=None,  # Use default bounds for each combination
-                popsize=args.popsize,
-                maxiter=args.maxiter,
-                random_state=args.random_state,
-                verbose=not args.quiet,
+                popsize=popsize,
+                maxiter=maxiter,
+                random_state=random_state,
+                verbose=verbose,
             )
         )
 
@@ -184,15 +139,30 @@ def main():
         print(f"Denominator: {','.join(f'{x:.6f}' for x in den)}")
         print("Metrics from tuning run:")
         for key, value in metrics.items():
-            print(f"  {key}: {value}")
+            print(f"  {key}: {value:.4f}")
+
+        # Save to JSON
+        output_path = Path(output_json_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        save_controller_to_json(
+            output_path,
+            num,
+            den,
+            metrics,
+            num_order=best_num_order,
+            den_order=best_den_order,
+            plant_tf=plant_tf,
+            sampling_time=sampling_time,
+        )
+        print(f"\nController saved to: {output_path}")
     else:
         # Use fixed orders
         # Validate strict properness requirement
-        if args.num_order >= args.den_order:
+        if num_order >= den_order:
             import sys
 
             print(
-                f"ERROR: Controller must be strictly proper: --num-order ({args.num_order}) must be < --den-order ({args.den_order}).",
+                f"ERROR: Controller must be strictly proper: num_order ({num_order}) must be < den_order ({den_order}).",
                 file=sys.stderr,
             )
             print(
@@ -201,39 +171,54 @@ def main():
             )
             sys.exit(1)
 
-        total_params = (args.num_order + 1) + args.den_order
-        bounds = [(-args.bound_mag, args.bound_mag)] * total_params
+        total_params = (num_order + 1) + den_order
+        bounds = [(-bound_mag, bound_mag)] * total_params
 
         num, den, metrics = tune_discrete_controller(
             plant_tf=plant_tf,
-            sampling_time=args.sampling_time,
+            sampling_time=sampling_time,
             specs=specs,
-            num_order=args.num_order,
-            den_order=args.den_order,
-            t_end=args.t_end,
-            step_amplitude=args.step,
+            num_order=num_order,
+            den_order=den_order,
+            t_end=t_end,
+            step_amplitude=step_amplitude,
             bounds=bounds,
-            popsize=args.popsize,
-            maxiter=args.maxiter,
-            random_state=args.random_state,
-            verbose=not args.quiet,
+            popsize=popsize,
+            maxiter=maxiter,
+            random_state=random_state,
+            verbose=verbose,
         )
 
         print("\n=== Tuned Controller ===")
-        print(f"Numerator: {','.join(f'{x:.6f}' for x in num)}")
-        print(f"Denominator: {','.join(f'{x:.6f}' for x in den)}")
+        print(f"num = [{','.join(f'{x:.6f}' for x in num)}];")
+        print(f"den = [{','.join(f'{x:.6f}' for x in den)}];")
         print("Metrics from tuning run:")
         for key, value in metrics.items():
             print(f"  {key}: {value:.4f}")
 
+        # Save to JSON
+        output_path = Path(output_json_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        save_controller_to_json(
+            output_path,
+            num,
+            den,
+            metrics,
+            num_order=num_order,
+            den_order=den_order,
+            plant_tf=plant_tf,
+            sampling_time=sampling_time,
+        )
+        print(f"\nController saved to: {output_path}")
+
     t, y, u, e = simulate_hybrid_step_response(
         controller_tf=(num, den),
         plant_tf=plant_tf,
-        sampling_time=args.sampling_time,
-        t_end=args.t_end,
-        step_amplitude=args.step,
+        sampling_time=sampling_time,
+        t_end=t_end,
+        step_amplitude=step_amplitude,
     )
-    final_metrics = compute_step_metrics(t, y, reference=args.step)
+    final_metrics = compute_step_metrics(t, y, reference=step_amplitude)
 
     fig, _ = plot_hybrid_response(
         t,
@@ -241,11 +226,11 @@ def main():
         u,
         e,
         final_metrics,
-        step_amplitude=args.step,
-        save_path=str(args.save_path),
+        step_amplitude=step_amplitude,
+        save_path=str(save_path),
     )
-    print(f"\nPlot saved to {args.save_path}")
-    if args.show:
+    print(f"\nPlot saved to {save_path}")
+    if show_plot:
         fig.show()
 
 
