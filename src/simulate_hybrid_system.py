@@ -17,6 +17,9 @@ System structure:
 import numpy as np
 from scipy import signal
 
+from .response_metrics import compute_step_metrics
+from .plotting_utils import plot_hybrid_response
+
 
 def pid_to_discrete_tf(kp, ki, kd, Ts, method='tustin'):
     """
@@ -331,14 +334,16 @@ if __name__ == "__main__":
     """
     Example usage
     """
-    import matplotlib.pyplot as plt
-    
     # Example: PID controller (kP, kI, kD)
     kP = -8.0
     kI = 0.0
     kD = 0.0
     sampling_time = 0.015
-    controller_tf = pid_to_discrete_tf(kP, kI, kD, sampling_time)
+    # controller_tf = pid_to_discrete_tf(kP, kI, kD, sampling_time)
+    
+    controller_num = [-1.71826469 -0.52338036 -0.60482782]
+    controller_den = [1.0, 0.35443462, -0.20391]
+    controller_tf = (controller_num, controller_den)
     
     # Example plant: P(s) = -2.936 / (0.031*s^2 + s)
     plant_num = [-2.936]
@@ -347,6 +352,7 @@ if __name__ == "__main__":
     
     # Simulation parameters
     t_end = 5.0
+    step_amplitude = 1.0
     
     # Simulate
     print("Simulating hybrid system...")
@@ -356,46 +362,25 @@ if __name__ == "__main__":
     
     try:
         t, y, u, e = simulate_hybrid_step_response(
-            controller_tf, plant_tf, sampling_time, t_end
+            controller_tf, plant_tf, sampling_time, t_end, step_amplitude=step_amplitude
         )
+        metrics = compute_step_metrics(t, y, reference=step_amplitude)
         
-        print(f"Simulation successful!")
+        print("Simulation successful!")
         print(f"  Time samples: {len(t)}")
-        print(f"  Output range: [{np.min(y):.4f}, {np.max(y):.4f}]")
-        print(f"  Steady-state: {y[-1]:.4f}")
+        print(f"  Steady-state: {metrics['steady_state']:.4f}")
+        print(f"  Peak value: {metrics['peak_value']:.4f}")
+        print(f"  Percent overshoot: {metrics['percent_overshoot']:.2f}%")
+        if np.isfinite(metrics['settling_time_2pct']):
+            print(f"  2% settling time: {metrics['settling_time_2pct']:.4f} s")
+        else:
+            print("  2% settling time: Not settled within simulation horizon")
         
-        # Plot results
-        fig, axes = plt.subplots(3, 1, figsize=(10, 10))
-        
-        # Output response
-        axes[0].plot(t, y, 'b-', linewidth=2, label='Output y(t)')
-        axes[0].axhline(y=y[-1], color='r', linestyle='--', alpha=0.5, label='Steady State')
-        axes[0].grid(True, alpha=0.3)
-        axes[0].set_xlabel('Time (s)')
-        axes[0].set_ylabel('Output')
-        axes[0].set_title('Step Response - Output')
-        axes[0].legend()
-        
-        # Control signal
-        axes[1].plot(t, u, 'g-', linewidth=2, label='Control u[k] (after ZOH)')
-        axes[1].grid(True, alpha=0.3)
-        axes[1].set_xlabel('Time (s)')
-        axes[1].set_ylabel('Control Signal')
-        axes[1].set_title('Control Signal')
-        axes[1].legend()
-        
-        # Error signal
-        axes[2].plot(t, e, 'r-', linewidth=2, label='Error e(t) = r(t) - y(t)')
-        axes[2].grid(True, alpha=0.3)
-        axes[2].set_xlabel('Time (s)')
-        axes[2].set_ylabel('Error')
-        axes[2].set_title('Error Signal')
-        axes[2].legend()
-        
-        plt.tight_layout()
-        plt.savefig('hybrid_system_response.png', dpi=150, bbox_inches='tight')
+        fig, axes = plot_hybrid_response(
+            t, y, u, e, metrics, step_amplitude=step_amplitude, save_path='hybrid_system_response.png'
+        )
         print("  Plot saved to 'hybrid_system_response.png'")
-        plt.show()
+        fig.show()
         
     except Exception as e:
         print(f"Simulation failed: {e}")
