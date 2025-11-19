@@ -29,10 +29,24 @@ def compute_step_metrics(
 
     band = 0.02 * max(abs(steady_state), 1e-9)  # 2% band
     settling_time = np.inf
+
+    # Settling time: first time after which response stays within 2% band
+    # for the remainder of simulation (or at least 0.1s if near the end)
+    if len(t) > 1:
+        dt = t[1] - t[0]
+        min_settled_samples = max(1, int(0.1 / dt))  # At least 0.1s
+    else:
+        min_settled_samples = 1
+
     for idx in range(len(y)):
-        if np.abs(y[idx] - steady_state) <= band and np.all(
-            np.abs(y[idx:] - steady_state) <= band
-        ):
+        remaining_samples = len(y) - idx
+
+        # Need at least min_settled_samples remaining to consider settling
+        if remaining_samples < min_settled_samples:
+            continue
+
+        # Check if response stays within band for the remainder
+        if np.all(np.abs(y[idx:] - steady_state) <= band):
             settling_time = t[idx]
             break
 
@@ -42,4 +56,3 @@ def compute_step_metrics(
         "settling_time_2pct": settling_time,
         "peak_value": peak,
     }
-

@@ -37,7 +37,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Comma-separated plant denominator coefficients (continuous-time).",
     )
     parser.add_argument(
-        "--sampling-time", type=float, default=0.015, help="Controller sampling time (s)."
+        "--sampling-time",
+        type=float,
+        default=0.015,
+        help="Controller sampling time (s).",
     )
     parser.add_argument(
         "--max-overshoot",
@@ -55,15 +58,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--num-order", type=int, default=2, help="Discrete controller numerator order."
     )
     parser.add_argument(
-        "--den-order", type=int, default=2, help="Discrete controller denominator order (excluding leading 1)."
+        "--den-order",
+        type=int,
+        default=2,
+        help="Discrete controller denominator order (excluding leading 1).",
     )
-    parser.add_argument("--t-end", type=float, default=5.0, help="Simulation horizon (s).")
+    parser.add_argument(
+        "--t-end", type=float, default=5.0, help="Simulation horizon (s)."
+    )
     parser.add_argument("--step", type=float, default=1.0, help="Step amplitude.")
     parser.add_argument(
-        "--popsize", type=int, default=10, help="Population size for differential evolution."
+        "--popsize",
+        type=int,
+        default=10,
+        help="Population size for differential evolution.",
     )
     parser.add_argument(
-        "--maxiter", type=int, default=30, help="Maximum iterations for differential evolution."
+        "--maxiter",
+        type=int,
+        default=30,
+        help="Maximum iterations for differential evolution.",
     )
     parser.add_argument(
         "--bound-mag",
@@ -89,6 +103,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--quiet",
         action="store_true",
         help="Suppress optimizer progress output.",
+    )
+    parser.add_argument(
+        "--u-min",
+        type=float,
+        default=None,
+        help="Minimum control signal constraint (saturation lower limit).",
+    )
+    parser.add_argument(
+        "--u-max",
+        type=float,
+        default=None,
+        help="Maximum control signal constraint (saturation upper limit).",
     )
     return parser
 
@@ -116,6 +142,8 @@ def main():
         maxiter=args.maxiter,
         random_state=args.random_state,
         verbose=not args.quiet,
+        u_min=args.u_min,
+        u_max=args.u_max,
     )
 
     print("\n=== Tuned Controller ===")
@@ -131,6 +159,8 @@ def main():
         sampling_time=args.sampling_time,
         t_end=args.t_end,
         step_amplitude=args.step,
+        u_min=args.u_min,
+        u_max=args.u_max,
     )
     final_metrics = compute_step_metrics(t, y, reference=args.step)
 
@@ -162,4 +192,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

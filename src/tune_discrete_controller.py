@@ -61,6 +61,7 @@ def params_to_discrete_tf(
 
     return num, den
 
+
 def _make_default_bounds(
     total_params: int, magnitude: float = 2.0
 ) -> Sequence[Tuple[float, float]]:
@@ -84,6 +85,8 @@ def tune_discrete_controller(
     maxiter: int = 60,
     random_state: int | None = None,
     verbose: bool = True,
+    u_min: float | None = None,
+    u_max: float | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, dict]:
     """
     Search for discrete controller coefficients meeting the provided specs.
@@ -114,6 +117,8 @@ def tune_discrete_controller(
                 sampling_time,
                 t_end=t_end,
                 step_amplitude=step_amplitude,
+                u_min=u_min,
+                u_max=u_max,
             )
             metrics = compute_step_metrics(t, y, reference=step_amplitude)
         except Exception:
@@ -123,22 +128,26 @@ def tune_discrete_controller(
         overshoot_penalty = max(
             0.0, metrics["percent_overshoot"] - specs.max_overshoot_pct
         )
+
+        # Stronger penalty for settling time violations
         settling_penalty = 0.0
         if not np.isfinite(metrics["settling_time_2pct"]):
-            settling_penalty = specs.settling_time_2pct
+            # If doesn't settle, use a large penalty based on simulation time
+            # This encourages the optimizer to find solutions that actually settle
+            settling_penalty = t_end + 10.0 * specs.settling_time_2pct
         else:
-            settling_penalty = max(
+            # Use squared penalty to make violations more expensive
+            violation = max(
                 0.0, metrics["settling_time_2pct"] - specs.settling_time_2pct
             )
+            settling_penalty = violation**2
 
         # Encourage steady-state accuracy
         steady_state_error = abs(metrics["steady_state"] - step_amplitude)
 
         # Weighted sum cost
         cost = (
-            5.0 * overshoot_penalty
-            + 2.0 * settling_penalty
-            + 3.0 * steady_state_error
+            5.0 * overshoot_penalty + 2.0 * settling_penalty + 3.0 * steady_state_error
         )
 
         if cost < best_record["cost"]:
@@ -214,4 +223,3 @@ if __name__ == "__main__":
     print("\nClosed-loop metrics:")
     for k, v in metrics.items():
         print(f"  {k}: {v}")
-
