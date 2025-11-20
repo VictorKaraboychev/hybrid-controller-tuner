@@ -21,6 +21,7 @@ def plot_hybrid_response(
     metrics: dict,
     step_amplitude: float = 1.0,
     save_path: str | None = None,
+    controller_tf: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> tuple[Figure, list[Axes]]:
     """
     Plot output, control, and error signals with 2% settling band and peak annotations.
@@ -41,6 +42,8 @@ def plot_hybrid_response(
         Amplitude of step input (default: 1.0)
     save_path : str | None, optional
         Path to save the figure (default: None, don't save)
+    controller_tf : tuple of np.ndarray, optional
+        Controller transfer function (num, den) for plotting poles and zeros
 
     Returns
     -------
@@ -51,7 +54,9 @@ def plot_hybrid_response(
     """
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(3, 1, figsize=(10, 10))
+    # Create 4 subplots if controller_tf is provided, otherwise 3
+    n_subplots = 4 if controller_tf is not None else 3
+    fig, axes = plt.subplots(n_subplots, 1, figsize=(10, 3.5 * n_subplots))
 
     steady = metrics["steady_state"]
     band = 0.02 * max(abs(steady), 1e-9)
@@ -106,7 +111,57 @@ def plot_hybrid_response(
     axes[2].set_title("Error Signal")
     axes[2].legend()
 
-    plt.tight_layout()
+    # Plot poles and zeros on z-plane if controller is provided
+    if controller_tf is not None:
+        num, den = controller_tf
+        num = np.asarray(num)
+        den = np.asarray(den)
+
+        # Find zeros (roots of numerator) and poles (roots of denominator)
+        zeros = np.roots(num)
+        poles = np.roots(den)
+
+        # Plot unit circle
+        theta = np.linspace(0, 2 * np.pi, 200)
+        unit_circle = np.exp(1j * theta)
+        axes[3].plot(unit_circle.real, unit_circle.imag, "k--", linewidth=1.5, label="Unit Circle")
+
+        # Plot poles (x markers)
+        if len(poles) > 0:
+            axes[3].plot(
+                poles.real,
+                poles.imag,
+                "rx",
+                markersize=10,
+                markeredgewidth=2,
+                label="Poles",
+            )
+
+        # Plot zeros (o markers)
+        if len(zeros) > 0:
+            axes[3].plot(
+                zeros.real,
+                zeros.imag,
+                "bo",
+                markersize=10,
+                markeredgewidth=2,
+                fillstyle="none",
+                label="Zeros",
+            )
+
+        axes[3].axhline(0, color="k", linewidth=0.5, alpha=0.3)
+        axes[3].axvline(0, color="k", linewidth=0.5, alpha=0.3)
+        axes[3].grid(True, alpha=0.3)
+        axes[3].set_xlabel("Real")
+        axes[3].set_ylabel("Imaginary")
+        axes[3].set_title("Controller Poles and Zeros (z-plane)")
+        axes[3].legend(loc="center left", bbox_to_anchor=(1, 0.5))
+        axes[3].set_aspect("equal")
+        # Set reasonable limits to show unit disk clearly
+        axes[3].set_xlim(-1.2, 1.2)
+        axes[3].set_ylim(-1.2, 1.2)
+
+    plt.tight_layout(rect=[0, 0, 0.95, 1])  # Leave space on right for legend
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
     return fig, axes

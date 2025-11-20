@@ -127,6 +127,8 @@ The tuner reads all configuration from `specs.json`. Here's the structure:
 - `bound_mag`: Magnitude bound for parameter search range (default: 2.0)
 - `random_state`: Random seed for reproducibility (null = random)
 
+**Note on Early Stopping:** The optimizer uses a convergence tolerance (`tol=0.001`) that may cause it to stop before reaching `maxiter` if the relative improvement in the best solution falls below 0.1% between iterations. This is normal behavior and indicates the optimizer has converged to a local minimum. If you want to force the optimizer to run for the full `maxiter` iterations, you can modify the `tol` parameter in the code (setting `tol=0` disables early stopping).
+
 **Controller Structure:**
 
 - `num_order`: Numerator order (degree) for fixed-order tuning. Controller numerator has `num_order + 1` coefficients
@@ -249,11 +251,12 @@ The controller transfer function D[z] is defined by:
 
 ### Response Plot
 
-The generated plot shows three subplots:
+The generated plot shows four subplots:
 
 1. **Output Response**: Step response with reference, steady-state, 2% settling band, peak annotation, and settling time marker
 2. **Control Signal**: Discrete control signal u[k] shown as Zero-Order Hold (ZOH)
 3. **Error Signal**: Error e(t) = r(t) - y(t)
+4. **Pole-Zero Plot**: Controller poles (red 'x') and zeros (blue 'o') on the z-plane with unit circle. All poles must be inside the unit circle for stability.
 
 ![Hybrid System Response](response.png)
 
@@ -293,6 +296,8 @@ The generated plot shows three subplots:
 - Increasing `bound_mag` to allow larger parameter values
 - Using a higher-order controller (increase `den_order`)
 - Relaxing performance specifications
+
+**Optimization stops early before maxiter**: This is normal behavior. The optimizer uses a convergence tolerance (`tol=0.001`) and stops when the relative improvement falls below 0.1%. This indicates convergence to a local minimum. The optimizer may still find better solutions in later iterations, but the improvement rate has slowed significantly. If you want to force full iterations, you can modify the code to set `tol=0`.
 
 **Optimization doesn't converge**: Try:
 

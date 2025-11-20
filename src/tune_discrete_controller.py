@@ -425,6 +425,7 @@ def tune_discrete_controller(
         polish=True,
         updating="deferred",
         disp=verbose,
+        tol=0.001,
     )
 
     if best_record["params"] is None:

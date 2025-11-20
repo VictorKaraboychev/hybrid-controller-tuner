@@ -242,6 +242,7 @@ def main():
         final_metrics,
         step_amplitude=step_amplitude,
         save_path=str(save_path),
+        controller_tf=(num, den),
     )
     print(f"\nPlot saved to {save_path}")
     if show_plot:
