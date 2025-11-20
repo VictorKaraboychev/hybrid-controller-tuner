@@ -21,9 +21,9 @@
 		"steady_state_error_weight": 3.0,
 		"control_signal_limit_weight": 2.0
 	},
-	"t_end": 1.0,
+	"t_end": 0.5,
 	"step_amplitude": 1.4,
-	"popsize": 20,
+	"popsize": 40,
 	"maxiter": 250,
 	"tol": 0.0,
 	"num_order": 1,

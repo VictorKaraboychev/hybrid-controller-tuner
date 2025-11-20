@@ -73,7 +73,7 @@ def plot_hybrid_response(
     axes[0].annotate(
         f"Peak {y[peak_idx]:.3f}",
         xy=(t[peak_idx], y[peak_idx]),
-        xytext=(t[peak_idx], y[peak_idx] + 0.05 * step_amplitude),
+        xytext=(t[peak_idx], steady - 0.1 * step_amplitude),
         arrowprops=dict(arrowstyle="->", color="m"),
         fontsize=9,
     )
@@ -82,7 +82,7 @@ def plot_hybrid_response(
         axes[0].annotate(
             f"Ts = {settling_time:.3f}s",
             xy=(settling_time, steady),
-            xytext=(settling_time, steady + 0.1 * step_amplitude),
+            xytext=(settling_time, steady - 0.1 * step_amplitude),
             arrowprops=dict(arrowstyle="->", color="g"),
             fontsize=9,
         )
