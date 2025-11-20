@@ -130,6 +130,192 @@ def _make_default_bounds(
     return [(-magnitude, magnitude)] * total_params
 
 
+def _make_objective_function(
+    plant_tf: Tuple[Sequence[float], Sequence[float]],
+    sampling_time: float,
+    specs: PerformanceSpecs,
+    num_order: int,
+    den_order: int,
+    t_end: float,
+    step_amplitude: float,
+    best_record: dict,
+    cost_weights: CostWeights | None = None,
+) -> callable:
+    """
+    Create an objective function for controller optimization.
+
+    Parameters
+    ----------
+    plant_tf : tuple
+        Plant transfer function (num, den) in continuous-time
+    sampling_time : float
+        Sampling time in seconds
+    specs : PerformanceSpecs
+        Performance requirements
+    num_order : int
+        Numerator order
+    den_order : int
+        Denominator order
+    t_end : float
+        Simulation end time
+    step_amplitude : float
+        Step input amplitude
+    best_record : dict
+        Dictionary to store best parameters, metrics, and cost
+    cost_weights : CostWeights, optional
+        Weights for cost function components. If None, uses default weights.
+
+    Returns
+    -------
+    callable
+        Objective function that takes parameter vector and returns cost
+    """
+    if cost_weights is None:
+        cost_weights = CostWeights()
+
+    def objective(param_vec: np.ndarray) -> float:
+        try:
+            controller_tf = params_to_discrete_tf(param_vec, num_order, den_order)
+            t, y, u, _ = simulate_hybrid_step_response(
+                controller_tf,
+                plant_tf,
+                sampling_time,
+                t_end=t_end,
+                step_amplitude=step_amplitude,
+            )
+            metrics = compute_step_metrics(t, y, reference=step_amplitude)
+        except Exception:
+            # Penalize unstable or failed simulations
+            return 1e6
+
+        overshoot_penalty = max(
+            0.0, metrics["percent_overshoot"] - specs.max_overshoot_pct
+        )
+
+        # Stronger penalty for settling time violations
+        settling_penalty = 0.0
+        if not np.isfinite(metrics["settling_time_2pct"]):
+            # If doesn't settle, use a large penalty based on simulation time
+            # This encourages the optimizer to find solutions that actually settle
+            settling_penalty = t_end + 10.0 * specs.settling_time_2pct
+        else:
+            # Use squared penalty to make violations more expensive
+            violation = max(
+                0.0, metrics["settling_time_2pct"] - specs.settling_time_2pct
+            )
+            settling_penalty = violation**2
+
+        # Encourage steady-state accuracy
+        steady_state_error = abs(metrics["steady_state"] - step_amplitude)
+
+        # Control signal limit penalty (only penalize if limit is exceeded)
+        control_signal_penalty = 0.0
+        if specs.max_control_signal is not None:
+            max_control_magnitude = np.max(np.abs(u))
+            
+            violation = max(0.0, max_control_magnitude - specs.max_control_signal)
+            control_signal_penalty = violation**2  # Squared penalty for violations
+
+        # Weighted sum cost
+        constraints = (
+            cost_weights.overshoot_weight * overshoot_penalty
+            + cost_weights.settling_time_weight * settling_penalty
+            + cost_weights.steady_state_error_weight * steady_state_error
+            + cost_weights.control_signal_limit_weight * control_signal_penalty
+        )
+        
+        objectives = (
+            cost_weights.settling_time_weight * metrics["settling_time_2pct"]
+        )
+        
+        # Solve the constraints before the objectives become important
+        cost = 100.0 * constraints + objectives
+
+        if cost < best_record["cost"]:
+            best_record["cost"] = cost
+            best_record["params"] = param_vec.copy()
+            best_record["metrics"] = metrics
+
+        return cost
+
+    return objective
+
+
+def _compute_cost_from_metrics(
+    metrics: dict,
+    specs: PerformanceSpecs,
+    step_amplitude: float,
+    t_end: float,
+    max_control_magnitude: float | None = None,
+    cost_weights: CostWeights | None = None,
+) -> float:
+    """
+    Compute cost from performance metrics.
+
+    This is useful when you already have metrics and control signal data,
+    without needing to run the full objective function.
+
+    Parameters
+    ----------
+    metrics : dict
+        Performance metrics from compute_step_metrics
+    specs : PerformanceSpecs
+        Performance requirements
+    step_amplitude : float
+        Step input amplitude
+    t_end : float
+        Simulation end time
+    max_control_magnitude : float, optional
+        Maximum absolute value of control signal. If None, control signal cost is 0.
+    cost_weights : CostWeights, optional
+        Weights for cost function components. If None, uses default weights.
+
+    Returns
+    -------
+    float
+        Computed cost value
+    """
+    if cost_weights is None:
+        cost_weights = CostWeights()
+
+    overshoot_penalty = max(
+        0.0, metrics["percent_overshoot"] - specs.max_overshoot_pct
+    )
+
+    # Stronger penalty for settling time violations
+    settling_penalty = 0.0
+    if not np.isfinite(metrics["settling_time_2pct"]):
+        # If doesn't settle, use a large penalty based on simulation time
+        settling_penalty = t_end + 10.0 * specs.settling_time_2pct
+    else:
+        # Use squared penalty to make violations more expensive
+        violation = max(
+            0.0, metrics["settling_time_2pct"] - specs.settling_time_2pct
+        )
+        settling_penalty = violation**2
+
+    # Encourage steady-state accuracy
+    steady_state_error = abs(metrics["steady_state"] - step_amplitude)
+
+    # Control signal limit penalty (only penalize if limit is exceeded)
+    control_signal_penalty = 0.0
+    if specs.max_control_signal is not None and max_control_magnitude is not None:
+        if max_control_magnitude > specs.max_control_signal:
+            # Penalize violation of control signal limit
+            violation = max_control_magnitude - specs.max_control_signal
+            control_signal_penalty = violation**2  # Squared penalty for violations
+
+    # Weighted sum cost
+    cost = (
+        cost_weights.overshoot_weight * overshoot_penalty
+        + cost_weights.settling_time_weight * settling_penalty
+        + cost_weights.steady_state_error_weight * steady_state_error
+        + cost_weights.control_signal_limit_weight * control_signal_penalty
+    )
+
+    return cost
+
+
 def tune_discrete_controller(
     plant_tf: Tuple[Sequence[float], Sequence[float]],
     sampling_time: float,
