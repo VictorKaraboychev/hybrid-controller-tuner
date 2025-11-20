@@ -1,5 +1,5 @@
 """
-Entry point wrapper for the PID tuner application.
+Entry point wrapper for the controller tuner application.
 Run this script to start the tuning process.
 """
 
