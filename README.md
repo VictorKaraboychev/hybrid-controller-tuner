@@ -159,16 +159,24 @@ The tuner reads all configuration from `specs.json`. Here's the structure:
   "sampling_time": 0.5,
   "specs": {
     "max_overshoot_pct": 45.0,
-    "settling_time_2pct": 4.0,
-    "max_control_signal": null
+    "settling_time_2pct": 7.0,
+    "max_control_signal": 0.7
+  },
+  "cost_weights": {
+    "overshoot_weight": 1.0,
+    "settling_time_weight": 2.0,
+    "steady_state_error_weight": 3.0,
+    "control_signal_limit_weight": 2.0
   },
   "t_end": 30.0,
   "popsize": 20,
-  "maxiter": 300,
+  "maxiter": 250,
   "num_order": 1,
   "den_order": 2,
-  "output_json": "output/outer_controller.json",
-  "save_path": "output/outer_response.png"
+  "quiet": false,
+  "show": false,
+  "save_path": "output/outer_response.png",
+  "output_json": "output/outer_controller.json"
 }
 ```
 
@@ -183,16 +191,24 @@ The tuner reads all configuration from `specs.json`. Here's the structure:
   "sampling_time": 0.015,
   "specs": {
     "max_overshoot_pct": 5.0,
-    "settling_time_2pct": 0.05,
-    "max_control_signal": null
+    "settling_time_2pct": 0.25,
+    "max_control_signal": 6.0
+  },
+  "cost_weights": {
+    "overshoot_weight": 1.0,
+    "settling_time_weight": 2.0,
+    "steady_state_error_weight": 3.0,
+    "control_signal_limit_weight": 2.0
   },
   "t_end": 1.0,
   "popsize": 20,
-  "maxiter": 100,
+  "maxiter": 250,
   "num_order": 1,
   "den_order": 2,
-  "output_json": "output/inner_controller.json",
-  "save_path": "output/inner_response.png"
+  "quiet": false,
+  "show": false,
+  "save_path": "output/inner_response.png",
+  "output_json": "output/inner_controller.json"
 }
 ```
 
@@ -205,18 +221,18 @@ The tuned controller is saved as a JSON file with the following structure:
 ```json
 {
   "controller": {
-    "numerator": [-1.890024, 1.890024],
-    "denominator": [1.0, -0.789375, 0.268998]
+    "numerator": [-0.5564943057180946, 0.5564946941656995],
+    "denominator": [1.0, -1.3023616512108467, 0.5148301400280902]
   },
   "structure": {
     "num_order": 1,
     "den_order": 2
   },
   "metrics": {
-    "steady_state": 1.0,
-    "percent_overshoot": 0.013,
-    "settling_time_2pct": 4.0,
-    "peak_value": 1.0001
+    "steady_state": 0.9999999988805117,
+    "percent_overshoot": 1.96954681658477,
+    "settling_time_2pct": 5.0,
+    "peak_value": 1.0196954670243106
   },
   "plant": {
     "numerator": [-0.258873],
