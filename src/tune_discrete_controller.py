@@ -330,6 +330,7 @@ def tune_discrete_controller(
     random_state: int | None = None,
     verbose: bool = True,
     cost_weights: CostWeights | None = None,
+    de_tol: float = 0.001,
 ) -> Tuple[np.ndarray, np.ndarray, dict]:
     """
     Search for discrete controller coefficients meeting the provided specs.
@@ -368,6 +369,8 @@ def tune_discrete_controller(
         Print optimization progress
     cost_weights : CostWeights, optional
         Weights for cost function components. If None, uses default weights.
+    de_tol : float, optional
+        Convergence tolerance passed to scipy's differential_evolution (default: 0.001)
 
     Returns:
     --------
@@ -425,7 +428,7 @@ def tune_discrete_controller(
         polish=True,
         updating="deferred",
         disp=verbose,
-        tol=0.001,
+        tol=de_tol,
     )
 
     if best_record["params"] is None:
@@ -465,6 +468,7 @@ def tune_discrete_controller_with_order_search(
     maxiter: int = 60,
     random_state: int | None = None,
     verbose: bool = True,
+    de_tol: float = 0.001,
     cost_weights: CostWeights | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, dict, int, int]:
     """
@@ -499,6 +503,8 @@ def tune_discrete_controller_with_order_search(
         Random seed for reproducibility
     verbose : bool, optional
         Print optimization progress
+    de_tol : float, optional
+        Convergence tolerance for differential evolution (default: 0.001)
     cost_weights : CostWeights, optional
         Weights for cost function components. If None, uses default weights.
 
@@ -585,6 +591,7 @@ def tune_discrete_controller_with_order_search(
                 maxiter=maxiter,
                 random_state=random_state,
                 verbose=False,  # Suppress individual tuning output
+                de_tol=de_tol,
                 cost_weights=cost_weights,
             )
 

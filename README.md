@@ -77,6 +77,7 @@ The tuner reads all configuration from `specs.json`. Here's the structure:
   "step_amplitude": 1.0,
   "popsize": 20,
   "maxiter": 100,
+  "tol": 0.001,
   "num_order": 1,
   "den_order": 2,
   "bound_mag": 2.0,
@@ -126,8 +127,9 @@ The tuner reads all configuration from `specs.json`. Here's the structure:
 - `maxiter`: Maximum number of iterations (default: 60)
 - `bound_mag`: Magnitude bound for parameter search range (default: 2.0)
 - `random_state`: Random seed for reproducibility (null = random)
+- `tol`: Relative convergence tolerance for differential evolution (default: 0.001). Set to 0 to disable tolerance-based early stopping.
 
-**Note on Early Stopping:** The optimizer uses a convergence tolerance (`tol=0.001`) that may cause it to stop before reaching `maxiter` if the relative improvement in the best solution falls below 0.1% between iterations. This is normal behavior and indicates the optimizer has converged to a local minimum. If you want to force the optimizer to run for the full `maxiter` iterations, you can modify the `tol` parameter in the code (setting `tol=0` disables early stopping).
+**Note on Early Stopping:** The optimizer uses a convergence tolerance (`tol`, default `0.001`) that may cause it to stop before reaching `maxiter` if the relative improvement in the best solution falls below 0.1% between iterations. This is normal behavior and indicates the optimizer has converged to a local minimum. Adjust the `tol` value in `specs.json` (set `tol` to `0` to disable tolerance-based early stopping) if you want the optimizer to continue iterating longer.
 
 **Controller Structure:**
 
@@ -171,8 +173,10 @@ The tuner reads all configuration from `specs.json`. Here's the structure:
     "control_signal_limit_weight": 2.0
   },
   "t_end": 30.0,
+  "step_amplitude": 0.15,
   "popsize": 20,
   "maxiter": 250,
+  "tol": 0.0,
   "num_order": 1,
   "den_order": 2,
   "quiet": false,
@@ -203,8 +207,10 @@ The tuner reads all configuration from `specs.json`. Here's the structure:
     "control_signal_limit_weight": 2.0
   },
   "t_end": 1.0,
+  "step_amplitude": 1.4,
   "popsize": 20,
   "maxiter": 250,
+  "tol": 0.0,
   "num_order": 1,
   "den_order": 2,
   "quiet": false,
@@ -297,7 +303,7 @@ The generated plot shows four subplots:
 - Using a higher-order controller (increase `den_order`)
 - Relaxing performance specifications
 
-**Optimization stops early before maxiter**: This is normal behavior. The optimizer uses a convergence tolerance (`tol=0.001`) and stops when the relative improvement falls below 0.1%. This indicates convergence to a local minimum. The optimizer may still find better solutions in later iterations, but the improvement rate has slowed significantly. If you want to force full iterations, you can modify the code to set `tol=0`.
+**Optimization stops early before maxiter**: This is normal behavior. The optimizer uses a convergence tolerance (`tol=0.001`) and stops when the relative improvement falls below 0.1%. This indicates convergence to a local minimum. The optimizer may still find better solutions in later iterations, but the improvement rate has slowed significantly. If you want to force full iterations, you can modify the specs to set `tol=0`.
 
 **Optimization doesn't converge**: Try:
 

@@ -22,8 +22,10 @@
 		"control_signal_limit_weight": 2.0
 	},
 	"t_end": 30.0,
+	"step_amplitude": 0.15,
 	"popsize": 20,
 	"maxiter": 250,
+	"tol": 0.0,
 	"num_order": 1,
 	"den_order": 2,
 	"quiet": false,

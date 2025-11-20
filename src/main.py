@@ -112,6 +112,7 @@ def main():
     step_amplitude = json_data.get("step_amplitude", 1.0)
     popsize = json_data.get("popsize", 25)
     maxiter = json_data.get("maxiter", 60)
+    de_tol = json_data.get("tol", 0.001)
     random_state = json_data.get("random_state", None)
     bound_mag = json_data.get("bound_mag", 2.0)
     search_orders = json_data.get("search_orders", False)
@@ -142,6 +143,7 @@ def main():
                 maxiter=maxiter,
                 random_state=random_state,
                 verbose=verbose,
+                de_tol=de_tol,
                 cost_weights=cost_weights,
             )
         )
@@ -200,6 +202,7 @@ def main():
             maxiter=maxiter,
             random_state=random_state,
             verbose=verbose,
+            de_tol=de_tol,
             cost_weights=cost_weights,
         )
 
