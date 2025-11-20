@@ -13,7 +13,7 @@
 	"specs": {
 		"max_overshoot_pct": 5.0,
 		"settling_time_2pct": 0.05,
-		"control_signal_weight": 0.0
+		"max_control_signal": null
 	},
 	"t_end": 1.0,
 	"popsize": 20,

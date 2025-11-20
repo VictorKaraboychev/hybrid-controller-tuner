@@ -34,14 +34,38 @@ class PerformanceSpecs:
     settling_time_2pct : float
         Required 2% settling time (seconds). Settling time is defined as the
         first time after which the response stays within ±2% of the steady-state.
-    control_signal_weight : float
-        Weight for minimizing control signal magnitude in the cost function.
-        Higher values prioritize smaller control signals. Default: 0.0 (disabled).
+    max_control_signal : float, optional
+        Maximum allowed absolute value of control signal. If provided, violations
+        of this limit will be penalized. If None, no control signal limit is enforced.
+        Default: None (disabled).
     """
 
     max_overshoot_pct: float
     settling_time_2pct: float
-    control_signal_weight: float = 0.0
+    max_control_signal: float | None = None
+
+
+@dataclass(frozen=True)
+class CostWeights:
+    """
+    Weights for different components of the cost function.
+
+    Attributes
+    ----------
+    overshoot_weight : float
+        Weight for overshoot penalty. Default: 1.0
+    settling_time_weight : float
+        Weight for settling time penalty. Default: 2.0
+    steady_state_error_weight : float
+        Weight for steady-state error. Default: 3.0
+    control_signal_limit_weight : float
+        Weight for control signal limit violation penalty. Default: 1.0
+    """
+
+    overshoot_weight: float = 1.0
+    settling_time_weight: float = 2.0
+    steady_state_error_weight: float = 3.0
+    control_signal_limit_weight: float = 1.0
 
 
 def params_to_discrete_tf(
@@ -119,6 +143,7 @@ def tune_discrete_controller(
     maxiter: int = 60,
     random_state: int | None = None,
     verbose: bool = True,
+    cost_weights: CostWeights | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, dict]:
     """
     Search for discrete controller coefficients meeting the provided specs.
@@ -133,7 +158,7 @@ def tune_discrete_controller(
     sampling_time : float
         Sampling time in seconds
     specs : PerformanceSpecs
-        Performance requirements (overshoot, settling time, control signal weight)
+        Performance requirements (overshoot, settling time, control signal limit)
     num_order : int, optional
         Numerator order (degree). The numerator will have num_order + 1 coefficients.
         Default: 2 (2nd order numerator = 3 coefficients)
@@ -155,6 +180,8 @@ def tune_discrete_controller(
         Random seed for reproducibility
     verbose : bool, optional
         Print optimization progress
+    cost_weights : CostWeights, optional
+        Weights for cost function components. If None, uses default weights.
 
     Returns:
     --------
@@ -191,62 +218,17 @@ def tune_discrete_controller(
         "cost": np.inf,
     }
 
-    def objective(param_vec: np.ndarray) -> float:
-        try:
-            controller_tf = params_to_discrete_tf(param_vec, num_order, den_order)
-            t, y, u, _ = simulate_hybrid_step_response(
-                controller_tf,
-                plant_tf,
-                sampling_time,
-                t_end=t_end,
-                step_amplitude=step_amplitude,
-            )
-            metrics = compute_step_metrics(t, y, reference=step_amplitude)
-        except Exception:
-            # Penalize unstable or failed simulations
-            return 1e6
-
-        overshoot_penalty = max(
-            0.0, metrics["percent_overshoot"] - specs.max_overshoot_pct
-        )
-
-        # Stronger penalty for settling time violations
-        settling_penalty = 0.0
-        if not np.isfinite(metrics["settling_time_2pct"]):
-            # If doesn't settle, use a large penalty based on simulation time
-            # This encourages the optimizer to find solutions that actually settle
-            settling_penalty = t_end + 10.0 * specs.settling_time_2pct
-        else:
-            # Use squared penalty to make violations more expensive
-            violation = max(
-                0.0, metrics["settling_time_2pct"] - specs.settling_time_2pct
-            )
-            settling_penalty = violation**2
-
-        # Encourage steady-state accuracy
-        steady_state_error = abs(metrics["steady_state"] - step_amplitude)
-
-        # Control signal magnitude objective (minimize max absolute value)
-        control_signal_cost = 0.0
-        if specs.control_signal_weight > 0.0:
-            # Use maximum absolute value of control signal
-            max_control_magnitude = np.max(np.abs(u))
-            control_signal_cost = max_control_magnitude
-
-        # Weighted sum cost
-        cost = (
-            1.0 * overshoot_penalty
-            + 2.0 * settling_penalty
-            + 3.0 * steady_state_error
-            + specs.control_signal_weight * control_signal_cost
-        )
-
-        if cost < best_record["cost"]:
-            best_record["cost"] = cost
-            best_record["params"] = param_vec.copy()
-            best_record["metrics"] = metrics
-
-        return cost
+    objective = _make_objective_function(
+        plant_tf=plant_tf,
+        sampling_time=sampling_time,
+        specs=specs,
+        num_order=num_order,
+        den_order=den_order,
+        t_end=t_end,
+        step_amplitude=step_amplitude,
+        best_record=best_record,
+        cost_weights=cost_weights,
+    )
 
     result = differential_evolution(
         objective,
@@ -296,6 +278,7 @@ def tune_discrete_controller_with_order_search(
     maxiter: int = 60,
     random_state: int | None = None,
     verbose: bool = True,
+    cost_weights: CostWeights | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, dict, int, int]:
     """
     Search for the best controller by trying different combinations of poles and zeros.
@@ -329,6 +312,8 @@ def tune_discrete_controller_with_order_search(
         Random seed for reproducibility
     verbose : bool, optional
         Print optimization progress
+    cost_weights : CostWeights, optional
+        Weights for cost function components. If None, uses default weights.
 
     Returns:
     --------
@@ -413,9 +398,10 @@ def tune_discrete_controller_with_order_search(
                 maxiter=maxiter,
                 random_state=random_state,
                 verbose=False,  # Suppress individual tuning output
+                cost_weights=cost_weights,
             )
 
-            # Compute cost for comparison (same as in tune_discrete_controller)
+            # Compute cost for comparison (using same cost function as optimization)
             # Need to simulate again to get control signal for cost calculation
             try:
                 t_test, y_test, u_test, _ = simulate_hybrid_step_response(
@@ -429,31 +415,18 @@ def tune_discrete_controller_with_order_search(
             except Exception:
                 max_control_magnitude = np.inf
 
-            overshoot_penalty = max(
-                0.0, metrics["percent_overshoot"] - specs.max_overshoot_pct
-            )
-            settling_penalty = 0.0
-            if not np.isfinite(metrics["settling_time_2pct"]):
-                settling_penalty = t_end + 10.0 * specs.settling_time_2pct
-            else:
-                violation = max(
-                    0.0, metrics["settling_time_2pct"] - specs.settling_time_2pct
-                )
-                settling_penalty = violation**2
-            steady_state_error = abs(metrics["steady_state"] - step_amplitude)
-            control_signal_cost = (
-                max_control_magnitude if specs.control_signal_weight > 0.0 else 0.0
-            )
-            cost = (
-                5.0 * overshoot_penalty
-                + 2.0 * settling_penalty
-                + 3.0 * steady_state_error
-                + specs.control_signal_weight * control_signal_cost
+            cost = _compute_cost_from_metrics(
+                metrics=metrics,
+                specs=specs,
+                step_amplitude=step_amplitude,
+                t_end=t_end,
+                max_control_magnitude=max_control_magnitude,
+                cost_weights=cost_weights,
             )
 
             if verbose:
                 control_info = ""
-                if specs.control_signal_weight > 0.0:
+                if specs.max_control_signal is not None:
                     control_info = f", max|u|={max_control_magnitude:.4f}"
                 print(
                     f"  Result: cost={cost:.4f}, settling_time={metrics['settling_time_2pct']:.4f}s, "

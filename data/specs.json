@@ -12,8 +12,14 @@
 	"sampling_time": 0.5,
 	"specs": {
 		"max_overshoot_pct": 45.0,
-		"settling_time_2pct": 4.0,
-		"control_signal_weight": 0.0
+		"settling_time_2pct": 7.0,
+		"max_control_signal": 0.7
+	},
+	"cost_weights": {
+		"overshoot_weight": 1.0,
+		"settling_time_weight": 2.0,
+		"steady_state_error_weight": 3.0,
+		"control_signal_limit_weight": 2.0
 	},
 	"t_end": 30.0,
 	"popsize": 20,

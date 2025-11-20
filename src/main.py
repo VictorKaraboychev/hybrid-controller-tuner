@@ -14,6 +14,7 @@ from src.response_metrics import compute_step_metrics
 from src.plotting_utils import plot_hybrid_response
 from src.simulate_hybrid_system import simulate_hybrid_step_response
 from src.tune_discrete_controller import (
+    CostWeights,
     PerformanceSpecs,
     tune_discrete_controller,
     tune_discrete_controller_with_order_search,
@@ -91,8 +92,19 @@ def main():
     specs = PerformanceSpecs(
         max_overshoot_pct=json_data["specs"]["max_overshoot_pct"],
         settling_time_2pct=json_data["specs"]["settling_time_2pct"],
-        control_signal_weight=json_data["specs"].get("control_signal_weight", 0.0),
+        max_control_signal=json_data["specs"].get("max_control_signal", None),
     )
+
+    # Extract cost weights (optional)
+    cost_weights = None
+    if "cost_weights" in json_data:
+        weights_data = json_data["cost_weights"]
+        cost_weights = CostWeights(
+            overshoot_weight=weights_data.get("overshoot_weight", 1.0),
+            settling_time_weight=weights_data.get("settling_time_weight", 2.0),
+            steady_state_error_weight=weights_data.get("steady_state_error_weight", 3.0),
+            control_signal_limit_weight=weights_data.get("control_signal_limit_weight", 1.0),
+        )
 
     # Extract tuning parameters
     sampling_time = json_data["sampling_time"]
@@ -130,6 +142,7 @@ def main():
                 maxiter=maxiter,
                 random_state=random_state,
                 verbose=verbose,
+                cost_weights=cost_weights,
             )
         )
 
@@ -187,6 +200,7 @@ def main():
             maxiter=maxiter,
             random_state=random_state,
             verbose=verbose,
+            cost_weights=cost_weights,
         )
 
         print("\n=== Tuned Controller ===")

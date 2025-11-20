@@ -65,7 +65,13 @@ The tuner reads all configuration from `data/specs.json`. Here's the structure:
   "specs": {
     "max_overshoot_pct": 5.0,
     "settling_time_2pct": 0.05,
-    "control_signal_weight": 0.0
+    "max_control_signal": null
+  },
+  "cost_weights": {
+    "overshoot_weight": 1.0,
+    "settling_time_weight": 2.0,
+    "steady_state_error_weight": 3.0,
+    "control_signal_limit_weight": 1.0
   },
   "t_end": 1.0,
   "step_amplitude": 1.0,
@@ -104,7 +110,15 @@ The tuner reads all configuration from `data/specs.json`. Here's the structure:
 
 - `specs.max_overshoot_pct`: Maximum allowed percent overshoot (e.g., 5.0 for 5%)
 - `specs.settling_time_2pct`: Required 2% settling time in seconds
-- `specs.control_signal_weight`: Weight for minimizing control effort (0.0 = disabled, higher = more emphasis on small control signals)
+- `specs.max_control_signal`: Maximum allowed absolute value of control signal. If exceeded, a penalty is applied. Set to `null` to disable (no limit enforced)
+
+**Cost Weights (Optional):**
+
+- `cost_weights`: Optional object to customize the cost function weights. If omitted, default weights are used:
+  - `overshoot_weight`: Weight for overshoot penalty (default: 1.0)
+  - `settling_time_weight`: Weight for settling time penalty (default: 2.0)
+  - `steady_state_error_weight`: Weight for steady-state error (default: 3.0)
+  - `control_signal_limit_weight`: Weight for control signal limit violation penalty (default: 1.0)
 
 **Optimization Parameters:**
 
@@ -146,7 +160,7 @@ The tuner reads all configuration from `data/specs.json`. Here's the structure:
   "specs": {
     "max_overshoot_pct": 45.0,
     "settling_time_2pct": 4.0,
-    "control_signal_weight": 0.0
+    "max_control_signal": null
   },
   "t_end": 30.0,
   "popsize": 20,
@@ -170,7 +184,7 @@ The tuner reads all configuration from `data/specs.json`. Here's the structure:
   "specs": {
     "max_overshoot_pct": 5.0,
     "settling_time_2pct": 0.05,
-    "control_signal_weight": 0.0
+    "max_control_signal": null
   },
   "t_end": 1.0,
   "popsize": 20,
@@ -235,7 +249,7 @@ The generated plot shows three subplots:
 
    - Overshoot violation penalty
    - Settling time violation penalty
-   - Optional control signal magnitude penalty
+   - Control signal limit violation penalty (if `max_control_signal` is specified)
 
 4. **Simulation**: Each candidate controller is evaluated by simulating the hybrid closed-loop system:
 
