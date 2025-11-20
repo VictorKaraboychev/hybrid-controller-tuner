@@ -81,8 +81,8 @@ def plot_hybrid_response(
         axes[0].axvline(settling_time, color="g", linestyle="-.", label="2% Settling Time")
         axes[0].annotate(
             f"Ts = {settling_time:.3f}s",
-            xy=(settling_time, steady),
-            xytext=(settling_time, steady - 0.1 * step_amplitude),
+            xy=(settling_time, 0.0),
+            xytext=(settling_time, 0.1 * step_amplitude),
             arrowprops=dict(arrowstyle="->", color="g"),
             fontsize=9,
         )
