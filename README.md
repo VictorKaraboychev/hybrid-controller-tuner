@@ -36,7 +36,7 @@ Required packages:
 
 ### Basic Usage
 
-1. **Configure your plant and specifications** in `data/specs.json` (see Configuration section below)
+1. **Configure your plant and specifications** in `specs.json` (see Configuration section below)
 
 2. **Run the tuner**:
 
@@ -46,14 +46,14 @@ python main.py
 
 The tuner will:
 
-- Read configuration from `data/specs.json`
+- Read configuration from `specs.json`
 - Optimize controller parameters to meet your specifications
-- Save the tuned controller to a JSON file (default: `data/controller.json`)
-- Generate a response plot (default: `hybrid_system_response.png`)
+- Save the tuned controller to a JSON file (default: `output/controller.json`)
+- Generate a response plot (default: `output/response.png`)
 
 ### Configuration File
 
-The tuner reads all configuration from `data/specs.json`. Here's the structure:
+The tuner reads all configuration from `specs.json`. Here's the structure:
 
 ```json
 {
@@ -88,8 +88,8 @@ The tuner reads all configuration from `data/specs.json`. Here's the structure:
   "random_state": null,
   "quiet": false,
   "show": false,
-  "save_path": "hybrid_system_response.png",
-  "output_json": "data/controller.json"
+  "save_path": "output/response.png",
+  "output_json": "output/controller.json"
 }
 ```
 
@@ -167,8 +167,8 @@ The tuner reads all configuration from `data/specs.json`. Here's the structure:
   "maxiter": 300,
   "num_order": 1,
   "den_order": 2,
-  "output_json": "data/outer_controller.json",
-  "save_path": "data/outer_response.png"
+  "output_json": "output/outer_controller.json",
+  "save_path": "output/outer_response.png"
 }
 ```
 
@@ -191,8 +191,8 @@ The tuner reads all configuration from `data/specs.json`. Here's the structure:
   "maxiter": 100,
   "num_order": 1,
   "den_order": 2,
-  "output_json": "data/inner_controller.json",
-  "save_path": "data/inner_response.png"
+  "output_json": "output/inner_controller.json",
+  "save_path": "output/inner_response.png"
 }
 ```
 
@@ -238,6 +238,8 @@ The generated plot shows three subplots:
 1. **Output Response**: Step response with reference, steady-state, 2% settling band, peak annotation, and settling time marker
 2. **Control Signal**: Discrete control signal u[k] shown as Zero-Order Hold (ZOH)
 3. **Error Signal**: Error e(t) = r(t) - y(t)
+
+![Hybrid System Response](response.png)
 
 ## How It Works
 

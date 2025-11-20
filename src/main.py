@@ -73,11 +73,11 @@ def save_controller_to_json(
 
 
 def main():
-    # Always read from data/specs.json
-    specs_path = Path("data/specs.json")
+    # Always read from specs.json
+    specs_path = Path("specs.json")
     if not specs_path.exists():
         raise FileNotFoundError(
-            f"Specs file not found: {specs_path}. Please create data/specs.json with tuning specifications."
+            f"Specs file not found: {specs_path}. Please create specs.json with tuning specifications."
         )
 
     json_data = load_specs_from_json(specs_path)

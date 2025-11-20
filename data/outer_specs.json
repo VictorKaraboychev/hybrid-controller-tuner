@@ -23,11 +23,11 @@
 	},
 	"t_end": 30.0,
 	"popsize": 20,
-	"maxiter": 300,
+	"maxiter": 250,
 	"num_order": 1,
 	"den_order": 2,
 	"quiet": false,
 	"show": false,
-	"save_path": "data/outer_response.png",
-	"output_json": "data/outer_controller.json"
+	"save_path": "output/outer_response.png",
+	"output_json": "output/outer_controller.json"
 }
