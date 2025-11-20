@@ -16,7 +16,7 @@ A Python tool for automatically tuning discrete-time controllers for hybrid cont
 1. Clone this repository:
 
 ```bash
-git clone <repository-url>
+git clone "https://github.com/VictorKaraboychev/hybrid-controller-tuner"
 cd hybrid-controller-tuner
 ```
 
