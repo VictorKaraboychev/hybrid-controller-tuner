@@ -9,9 +9,7 @@ from typing import Dict
 import numpy as np
 
 
-def compute_step_metrics(
-    t: np.ndarray, y: np.ndarray, reference: float = 1.0
-) -> Dict[str, float]:
+def compute_step_metrics(t: np.ndarray, y: np.ndarray) -> Dict[str, float]:
     """
     Extract steady-state, overshoot, settling-time, and peak metrics.
     """

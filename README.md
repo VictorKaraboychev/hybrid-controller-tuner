@@ -4,10 +4,11 @@ A Python tool for automatically tuning discrete-time controllers for hybrid cont
 
 ## Features
 
+- **System Builder**: Define custom control systems using Python with reusable building blocks
 - **Hybrid System Simulation**: Simulates discrete-time controllers with continuous-time plants using Zero-Order Hold (ZOH) discretization
 - **Automatic Tuning**: Uses differential evolution to optimize controller parameters
 - **Flexible Controller Structure**: Supports arbitrary polynomial controllers (not limited to PID)
-- **Order Search**: Optional automatic search over different controller orders
+- **Nested Control Systems**: Build cascaded control loops (e.g., outer/inner loops)
 - **Performance Metrics**: Computes overshoot, settling time, and other step response metrics
 - **Visualization**: Generates plots showing output, control signal, and error responses
 
@@ -36,7 +37,7 @@ Required packages:
 
 ### Basic Usage
 
-1. **Configure your plant and specifications** in `specs.json` (see Configuration section below)
+1. **Define your control system** in `system.py` (see [SYSTEM_BUILDER_README.md](SYSTEM_BUILDER_README.md) for details)
 
 2. **Run the tuner**:
 
@@ -46,179 +47,58 @@ python main.py
 
 The tuner will:
 
-- Read configuration from `specs.json`
+- Read your system definition from `system.py`
 - Optimize controller parameters to meet your specifications
 - Save the tuned controller to a JSON file (default: `output/controller.json`)
 - Generate a response plot (default: `output/response.png`)
 
-### Configuration File
+### Quick Start Example
 
-The tuner reads all configuration from `specs.json`. Here's the structure:
+Create a `system.py` file with your plant and specifications:
 
-```json
-{
-  "plant": {
-    "numerator": [-2.936],
-    "denominator": [0.031, 1.0, 0.0]
-  },
-  "sampling_time": 0.015,
-  "specs": {
-    "max_overshoot_pct": 5.0,
-    "settling_time_2pct": 0.05,
-    "max_control_signal": null
-  },
-  "cost_weights": {
-    "overshoot_weight": 1.0,
-    "settling_time_weight": 2.0,
-    "steady_state_error_weight": 3.0,
-    "control_signal_limit_weight": 1.0
-  },
-  "t_end": 1.0,
-  "step_amplitude": 1.0,
-  "popsize": 20,
-  "maxiter": 100,
-  "tol": 0.001,
-  "num_order": 1,
-  "den_order": 2,
-  "bound_mag": 2.0,
-  "search_orders": false,
-  "num_order_min": 1,
-  "num_order_max": 5,
-  "den_order_min": 2,
-  "den_order_max": 6,
-  "random_state": null,
-  "quiet": false,
-  "show": false,
-  "save_path": "output/response.png",
-  "output_json": "output/controller.json"
-}
+```python
+from src.system_blocks import ContinuousTF, Saturation
+from src.tune_discrete_controller import (
+    PerformanceSpecs, SystemParameters, OptimizationParameters
+)
+
+# Define your plant
+plant = ContinuousTF(num=[-2.936], den=[0.031, 1.0, 0.0], dt=0.001)
+input_saturation = Saturation(min_val=-6.0, max_val=6.0)
+
+def system(controller, r, t):
+    e = r - plant.y  # Use plant.y to access last output
+    u = controller.step(t, e)
+    u = input_saturation.step(u)
+    y = plant.step(u)
+    return e, u, y
+
+def reset():
+    plant.reset()
+    input_saturation.reset()
+
+# Define specifications
+specs = PerformanceSpecs(
+    max_overshoot_pct=5.0,
+    settling_time_2pct=0.25,
+    max_control_signal=6.0,
+)
+
+system_params = SystemParameters(
+    sampling_time=0.015,
+    num_order=2,
+    den_order=3,
+    t_end=0.5,
+    step_amplitude=1.4,
+)
+
+optimization_params = OptimizationParameters(
+    population=100,
+    max_iterations=1000,
+)
 ```
 
-#### Configuration Parameters
-
-**Plant Definition:**
-
-- `plant.numerator`: List of numerator coefficients for the continuous plant transfer function P(s) in descending powers of s
-- `plant.denominator`: List of denominator coefficients for P(s) in descending powers of s
-
-**System Parameters:**
-
-- `sampling_time`: Sampling time Ts in seconds (discrete controller update rate)
-- `t_end`: Simulation end time in seconds
-- `step_amplitude`: Amplitude of step reference input (default: 1.0)
-
-**Performance Specifications:**
-
-- `specs.max_overshoot_pct`: Maximum allowed percent overshoot (e.g., 5.0 for 5%)
-- `specs.settling_time_2pct`: Required 2% settling time in seconds
-- `specs.max_control_signal`: Maximum allowed absolute value of control signal. If exceeded, a penalty is applied. Set to `null` to disable (no limit enforced)
-
-**Cost Weights (Optional):**
-
-- `cost_weights`: Optional object to customize the cost function weights. If omitted, default weights are used:
-  - `overshoot_weight`: Weight for overshoot penalty (default: 1.0)
-  - `settling_time_weight`: Weight for settling time penalty (default: 2.0)
-  - `steady_state_error_weight`: Weight for steady-state error (default: 3.0)
-  - `control_signal_limit_weight`: Weight for control signal limit violation penalty (default: 1.0)
-
-**Optimization Parameters:**
-
-- `popsize`: Population size for differential evolution (default: 25)
-- `maxiter`: Maximum number of iterations (default: 60)
-- `bound_mag`: Magnitude bound for parameter search range (default: 2.0)
-- `random_state`: Random seed for reproducibility (null = random)
-- `tol`: Relative convergence tolerance for differential evolution (default: 0.001). Set to 0 to disable tolerance-based early stopping.
-
-**Note on Early Stopping:** The optimizer uses a convergence tolerance (`tol`, default `0.001`) that may cause it to stop before reaching `maxiter` if the relative improvement in the best solution falls below 0.1% between iterations. This is normal behavior and indicates the optimizer has converged to a local minimum. Adjust the `tol` value in `specs.json` (set `tol` to `0` to disable tolerance-based early stopping) if you want the optimizer to continue iterating longer.
-
-**Controller Structure:**
-
-- `num_order`: Numerator order (degree) for fixed-order tuning. Controller numerator has `num_order + 1` coefficients
-- `den_order`: Denominator order (degree) for fixed-order tuning. Controller denominator has `den_order + 1` coefficients (leading coefficient is always 1.0)
-- **Important**: Controller must be strictly proper: `num_order < den_order`
-
-**Order Search (Optional):**
-
-- `search_orders`: If `true`, automatically searches over different controller orders
-- `num_order_min`, `num_order_max`: Range of numerator orders to search
-- `den_order_min`, `den_order_max`: Range of denominator orders to search
-
-**Output Options:**
-
-- `quiet`: If `true`, suppress optimization progress output
-- `show`: If `true`, display the plot interactively (requires GUI)
-- `save_path`: Path to save the response plot
-- `output_json`: Path to save the tuned controller JSON file
-
-### Example Configurations
-
-#### Example 1: Simple First-Order Plant
-
-```json
-{
-  "plant": {
-    "numerator": [-0.258873],
-    "denominator": [1.0, 0.0, 0.0]
-  },
-  "sampling_time": 0.5,
-  "specs": {
-    "max_overshoot_pct": 45.0,
-    "settling_time_2pct": 7.0,
-    "max_control_signal": 0.7
-  },
-  "cost_weights": {
-    "overshoot_weight": 1.0,
-    "settling_time_weight": 2.0,
-    "steady_state_error_weight": 3.0,
-    "control_signal_limit_weight": 2.0
-  },
-  "t_end": 30.0,
-  "step_amplitude": 0.15,
-  "popsize": 20,
-  "maxiter": 250,
-  "tol": 0.0,
-  "num_order": 1,
-  "den_order": 2,
-  "quiet": false,
-  "show": false,
-  "save_path": "output/outer_response.png",
-  "output_json": "output/outer_controller.json"
-}
-```
-
-#### Example 2: Second-Order Plant with Strict Requirements
-
-```json
-{
-  "plant": {
-    "numerator": [-2.936],
-    "denominator": [0.031, 1.0, 0.0]
-  },
-  "sampling_time": 0.015,
-  "specs": {
-    "max_overshoot_pct": 5.0,
-    "settling_time_2pct": 0.25,
-    "max_control_signal": 6.0
-  },
-  "cost_weights": {
-    "overshoot_weight": 1.0,
-    "settling_time_weight": 2.0,
-    "steady_state_error_weight": 3.0,
-    "control_signal_limit_weight": 2.0
-  },
-  "t_end": 1.0,
-  "step_amplitude": 1.4,
-  "popsize": 20,
-  "maxiter": 250,
-  "tol": 0.0,
-  "num_order": 1,
-  "den_order": 2,
-  "quiet": false,
-  "show": false,
-  "save_path": "output/inner_response.png",
-  "output_json": "output/inner_controller.json"
-}
-```
+See [SYSTEM_BUILDER_README.md](SYSTEM_BUILDER_README.md) for complete documentation on building systems.
 
 ## Output
 
@@ -268,7 +148,12 @@ The generated plot shows four subplots:
 
 ## How It Works
 
-1. **Plant Discretization**: The continuous plant P(s) is discretized using Zero-Order Hold (ZOH) to obtain P[z]
+1. **System Definition**: You define your control system in `system.py` using building blocks:
+
+   - `ContinuousTF`: Continuous-time transfer functions (s-domain)
+   - `DiscreteTF`: Discrete-time transfer functions (z-domain)
+   - `Saturation`: Signal limiting blocks
+   - The `system(controller, r, t)` function defines the control loop
 
 2. **Controller Structure**: The discrete controller D[z] is parameterized as a rational transfer function with specified numerator and denominator orders
 
@@ -277,22 +162,27 @@ The generated plot shows four subplots:
    - Overshoot violation penalty
    - Settling time violation penalty
    - Control signal limit violation penalty (if `max_control_signal` is specified)
+   - Steady-state error
 
 4. **Simulation**: Each candidate controller is evaluated by simulating the hybrid closed-loop system:
 
-   - Discrete controller: e[k] → u[k] = D[z]e[k]
-   - Zero-Order Hold: u[k] → u(t)
+   - The `system()` function is called at each time step
+   - Discrete controller: e[k] → u[k] = D[z]e[k] (handles sampling internally)
+   - Zero-Order Hold: u[k] → u(t) (automatic in DiscreteTF)
    - Continuous plant: u(t) → y(t) = P(s)u(t)
-   - Error: e(t) = r(t) - y(t), sampled to e[k]
+   - Error: e(t) = r(t) - y(t), accessed via `plant.y` attribute
 
-5. **Validation**: The final controller is validated and metrics are computed
+5. **Validation**: The final controller is validated and metrics are computed. The tuned controller is saved to JSON and a response plot is generated.
 
 ## Tips
 
+- **System Builder**: Use the system builder approach (see [SYSTEM_BUILDER_README.md](SYSTEM_BUILDER_README.md)) - it's more flexible and powerful than JSON configuration
+- **Accessing Outputs**: Use the `.y` attribute on transfer functions to access last output values (e.g., `plant.y`, `p1.y`)
 - **Strict Properness**: Ensure `num_order < den_order` for a causal, implementable controller
 - **Sampling Time**: Choose an appropriate sampling time (typically 10-20x faster than the plant's dominant time constant)
-- **Optimization**: Increase `popsize` and `maxiter` for better results, but at the cost of longer computation time
-- **Order Search**: Use `search_orders: true` to automatically find the best controller structure, but this significantly increases computation time
+- **Optimization**: Increase `population` and `max_iterations` for better results, but at the cost of longer computation time
+- **Optimization Parameters**: For stable controllers, try `mutation=(0.5, 1.0)`, `recombination=0.6`, and `strategy='best2bin'`
+- **Nested Systems**: Build cascaded control systems by using one plant's output as another's input
 - **Tight Specs**: Very tight specifications (low overshoot, fast settling) may require higher-order controllers or may be infeasible
 
 ## Troubleshooting
@@ -303,13 +193,13 @@ The generated plot shows four subplots:
 - Using a higher-order controller (increase `den_order`)
 - Relaxing performance specifications
 
-**Optimization stops early before maxiter**: This is normal behavior. The optimizer uses a convergence tolerance (`tol=0.001`) and stops when the relative improvement falls below 0.1%. This indicates convergence to a local minimum. The optimizer may still find better solutions in later iterations, but the improvement rate has slowed significantly. If you want to force full iterations, you can modify the specs to set `tol=0`.
+**Optimization stops early before max_iterations**: This is normal behavior. The optimizer uses a convergence tolerance (`de_tol=0.001` by default) and stops when the relative improvement falls below 0.1%. This indicates convergence to a local minimum. The optimizer may still find better solutions in later iterations, but the improvement rate has slowed significantly. If you want to force full iterations, you can set `de_tol=0.0` in your `optimization_params`.
 
 **Optimization doesn't converge**: Try:
 
-- Increasing `maxiter` and/or `popsize`
+- Increasing `max_iterations` and/or `population` in `optimization_params`
 - Adjusting `bound_mag` to a more appropriate range
-- Using order search to find a better controller structure
+- Adjusting optimization parameters like `mutation`, `recombination`, or `strategy`
 
 **Controller not meeting specs**: The specifications may be too tight. Consider:
 

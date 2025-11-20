@@ -4,22 +4,22 @@ Discrete Controller Tuning for Hybrid Closed-Loop Systems
 
 This module searches for a discrete-time controller `D[z]` with arbitrary
 polynomials (not restricted to PID form) that satisfies step-response
-specifications for a given continuous plant with sampler/ZOH interface.
+specifications for a user-defined plant with sampler/ZOH interface.
 
-It leverages the hybrid simulation utilities defined in `simulate_hybrid_system`
+It leverages the hybrid simulation utilities defined in `simulate_user_system`
 to evaluate candidate controllers directly on the mixed continuous/discrete loop.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence, Tuple
+from typing import Sequence, Tuple, Union
 
 import numpy as np
 from scipy.optimize import differential_evolution
 
 from .response_metrics import compute_step_metrics
-from .simulate_hybrid_system import simulate_hybrid_step_response
+from .simulate_system import simulate_system
 
 
 @dataclass(frozen=True)
@@ -68,6 +68,90 @@ class CostWeights:
     control_signal_limit_weight: float = 1.0
 
 
+@dataclass(frozen=True)
+class SystemParameters:
+    """
+    System and simulation parameters.
+
+    Attributes
+    ----------
+    sampling_time : float
+        Sampling time for discrete controller (seconds)
+    num_order : int
+        Numerator order (degree) - must be < den_order
+    den_order : int
+        Denominator order (degree) - must be > num_order
+    t_end : float, optional
+        Simulation end time (seconds). Default: 5.0
+    step_amplitude : float, optional
+        Step input amplitude. Default: 1.0
+    dt : float, optional
+        Time step for continuous plant simulation (seconds). Default: 0.001
+    """
+
+    sampling_time: float
+    num_order: int
+    den_order: int
+    t_end: float = 5.0
+    step_amplitude: float = 1.0
+    dt: float = 0.001
+
+
+@dataclass(frozen=True)
+class OptimizationParameters:
+    """
+    Optimization algorithm parameters.
+
+    Attributes
+    ----------
+    population : int, optional
+        Population size for differential evolution. Default: 25
+        Recommended: 10 * number_of_parameters for better diversity
+    max_iterations : int, optional
+        Maximum iterations for optimization. Default: 60
+    de_tol : float, optional
+        Convergence tolerance (0.0 to disable early stopping). Default: 0.001
+    de_atol : float, optional
+        Absolute convergence tolerance. Default: 1e-8
+    bound_mag : float, optional
+        Magnitude of parameter bounds (symmetric: [-bound_mag, bound_mag]). Default: 2.0
+    random_state : int | None, optional
+        Random seed for reproducibility (None for random). Default: None
+    verbose : bool, optional
+        Print optimization progress. Default: True
+    workers : int, optional
+        Number of parallel workers for objective function evaluation.
+        -1 uses all available CPUs, 1 disables parallelization. Default: -1
+    mutation : Union[Tuple[float, float], float], optional
+        Mutation constant. If tuple, uses dithering (random value between bounds).
+        Lower values (0.5-1.0) are more conservative, better for fine-tuning.
+        Higher values (1.0-2.0) provide more exploration. Default: (0.75, 1.5)
+    recombination : float, optional
+        Recombination constant (crossover probability). Range: 0-1.
+        Lower values (0.5-0.6) preserve stable regions better.
+        Higher values (0.8-0.9) provide more exploration. Default: 0.7
+    strategy : str, optional
+        Mutation strategy. Options:
+        - 'best1bin': Uses best solution (default, good general-purpose)
+        - 'rand1bin': Uses random solution (more exploration)
+        - 'best2bin': Uses two difference vectors (good for constrained spaces)
+        - 'rand2bin': Most exploration (good for difficult landscapes)
+        Default: 'best1bin'
+    """
+
+    population: int = 25
+    max_iterations: int = 60
+    de_tol: float = 0.001
+    de_atol: float = 1e-8
+    bound_mag: float = 2.0
+    random_state: int | None = None
+    verbose: bool = True
+    workers: int = -1
+    mutation: Union[Tuple[float, float], float] = (0.75, 1.5)
+    recombination: float = 0.7
+    strategy: str = "best1bin"
+
+
 def params_to_discrete_tf(
     params: np.ndarray, num_order: int, den_order: int
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -76,16 +160,23 @@ def params_to_discrete_tf(
 
     A strictly proper transfer function has degree(numerator) < degree(denominator).
     This ensures the controller is causal and implementable.
+    
+    Integral action is always enforced by ensuring the controller has a pole at z=1.
+    This eliminates steady-state error from constant disturbances. The last denominator
+    coefficient is computed as: a_n = -1 - sum(a_1 to a_{n-1}).
 
     Parameters:
     -----------
     params : np.ndarray
         Optimization parameters: [num_coeffs..., den_coeffs...]
+        The last denominator coefficient is computed to enforce a pole at z=1,
+        so one fewer parameter is needed.
     num_order : int
         Numerator order (degree). Resulting numerator has num_order + 1 coefficients.
     den_order : int
         Denominator order (degree). Resulting denominator has den_order + 1 coefficients.
-        The leading denominator coefficient is fixed at 1.0.
+        The leading denominator coefficient is fixed at 1.0, and the last is computed
+        to enforce integral action.
 
     Returns:
     --------
@@ -98,6 +189,7 @@ def params_to_discrete_tf(
     -------
     ValueError
         If num_order >= den_order (not strictly proper)
+        If den_order < 1 (need at least one denominator coefficient for integral action)
         If incorrect number of parameters provided
     """
     # Enforce strict properness: degree(num) < degree(den)
@@ -107,17 +199,144 @@ def params_to_discrete_tf(
             f"Current: degree(num) = {num_order}, degree(den) = {den_order}"
         )
 
-    num_coeffs = num_order + 1
-    if len(params) != num_coeffs + den_order:
+    if den_order < 1:
         raise ValueError(
-            f"Expected {num_coeffs + den_order} params, received {len(params)}"
+            f"Integral action requires den_order >= 1, got {den_order}"
+        )
+
+    num_coeffs = num_order + 1
+    # Last denominator coefficient is computed for integral action, so one fewer parameter
+    expected_params = num_coeffs + den_order - 1
+
+    if len(params) != expected_params:
+        raise ValueError(
+            f"Expected {expected_params} params, received {len(params)}"
         )
 
     num = np.asarray(params[:num_coeffs], dtype=float)
+    
+    # Get all but the last denominator coefficient from parameters
     den_rest = np.asarray(params[num_coeffs:], dtype=float)
-    den = np.concatenate(([1.0], den_rest))
+    # Enforce pole at z=1: D(1) = 1 + a1 + a2 + ... + an = 0
+    # So: an = -1 - (a1 + a2 + ... + a_{n-1})
+    last_coeff = -1.0 - np.sum(den_rest)
+    den = np.concatenate(([1.0], den_rest, [last_coeff]))
 
     return num, den
+
+
+def _generate_stable_initial_individual(
+    bounds: Sequence[Tuple[float, float]],
+    num_order: int,
+    den_order: int,
+    max_attempts: int = 1000,
+) -> np.ndarray:
+    """
+    Generate a single initial individual with poles strictly inside the open unit disk.
+    
+    The integrator pole at z=1 is allowed (enforced by params_to_discrete_tf).
+    All other poles must be strictly inside the unit circle (|z| < 1).
+    
+    Parameters
+    ----------
+    bounds : Sequence[Tuple[float, float]]
+        Parameter bounds for each parameter
+    num_order : int
+        Numerator order
+    den_order : int
+        Denominator order
+    max_attempts : int
+        Maximum number of attempts to generate a valid individual
+        
+    Returns
+    -------
+    np.ndarray
+        Valid parameter vector with stable poles
+        
+    Raises
+    ------
+    RuntimeError
+        If unable to generate a valid individual after max_attempts
+    """
+    for attempt in range(max_attempts):
+        # Generate random parameters within bounds
+        params = np.array([
+            np.random.uniform(low, high) for low, high in bounds
+        ])
+        
+        try:
+            # Convert to transfer function
+            num, den = params_to_discrete_tf(params, num_order, den_order)
+            
+            # Find roots of denominator (controller poles)
+            controller_poles = np.roots(den)
+            
+            # Check pole stability
+            # Allow pole at z=1 (integrator) with tolerance
+            # All other poles must be strictly inside unit disk (|z| < 1)
+            integrator_tolerance = 1e-6
+            valid = True
+            
+            for pole in controller_poles:
+                pole_magnitude = np.abs(pole)
+                # Check if this is the integrator pole (z=1)
+                is_integrator = abs(pole_magnitude - 1.0) < integrator_tolerance
+                
+                if is_integrator:
+                    # Integrator pole is allowed
+                    continue
+                elif pole_magnitude >= 1.0 - 1e-10:
+                    # Pole on or outside unit circle (not allowed)
+                    valid = False
+                    break
+            
+            if valid:
+                return params
+                
+        except Exception:
+            # If conversion fails, try again
+            continue
+    
+    # If we get here, couldn't generate a valid individual
+    raise RuntimeError(
+        f"Failed to generate a stable initial individual after {max_attempts} attempts. "
+        f"Consider widening bounds or adjusting controller order."
+    )
+
+
+def _make_stable_initial_population(
+    bounds: Sequence[Tuple[float, float]],
+    popsize: int,
+    num_order: int,
+    den_order: int,
+) -> np.ndarray:
+    """
+    Generate an initial population where all individuals have poles strictly inside the open unit disk.
+    
+    Parameters
+    ----------
+    bounds : Sequence[Tuple[float, float]]
+        Parameter bounds for each parameter
+    popsize : int
+        Population size
+    num_order : int
+        Numerator order
+    den_order : int
+        Denominator order
+        
+    Returns
+    -------
+    np.ndarray
+        Initial population matrix of shape (popsize, n_params)
+    """
+    population = []
+    for i in range(popsize):
+        individual = _generate_stable_initial_individual(
+            bounds, num_order, den_order
+        )
+        population.append(individual)
+    
+    return np.array(population)
 
 
 def _make_default_bounds(
@@ -130,24 +349,134 @@ def _make_default_bounds(
     return [(-magnitude, magnitude)] * total_params
 
 
+class _ObjectiveFunction:
+    """
+    Objective function class for controller optimization.
+    
+    This class-based approach allows the function to be pickled for multiprocessing.
+    """
+    
+    def __init__(
+        self,
+        system_file: str,
+        sampling_time: float,
+        specs: PerformanceSpecs,
+        num_order: int,
+        den_order: int,
+        t_end: float,
+        step_amplitude: float,
+        cost_weights: CostWeights | None = None,
+        dt: float = 0.001,
+    ):
+        self.system_file = system_file
+        self.sampling_time = sampling_time
+        self.specs = specs
+        self.num_order = num_order
+        self.den_order = den_order
+        self.t_end = t_end
+        self.step_amplitude = step_amplitude
+        self.cost_weights = cost_weights if cost_weights is not None else CostWeights()
+        self.dt = dt
+    
+    def __call__(self, param_vec: np.ndarray) -> float:
+        try:
+            controller_tf = params_to_discrete_tf(param_vec, self.num_order, self.den_order)
+            
+            # Check controller stability by examining its poles
+            _, den = controller_tf
+            # Find roots of denominator (controller poles)
+            controller_poles = np.roots(den)
+            # Check if any pole is outside the unit circle (unstable)
+            if np.any(np.abs(controller_poles) > 1.0 + 1e-10):
+                # Penalize unstable controllers
+                return 1e6
+            
+            # Check if the computed last coefficient (for integral action) is reasonable
+            # Large coefficients can lead to numerical issues
+            if len(den) > 1:
+                last_coeff = den[-1]
+                # Penalize if the computed coefficient is very large (likely problematic)
+                if abs(last_coeff) > 50.0:
+                    return 1e6 + abs(last_coeff) * 100
+            
+            t, y, u, _ = simulate_system(
+                controller_tf=controller_tf,
+                system_file=self.system_file,
+                sampling_time=self.sampling_time,
+                t_end=self.t_end,
+                step_amplitude=self.step_amplitude,
+                dt=self.dt,
+            )
+            metrics = compute_step_metrics(t, y)
+        except Exception:
+            # Penalize unstable or failed simulations
+            return 1e6
+
+        overshoot_penalty = max(
+            0.0, metrics["percent_overshoot"] - self.specs.max_overshoot_pct
+        )
+
+        # Stronger penalty for settling time violations
+        settling_penalty = 0.0
+        if not np.isfinite(metrics["settling_time_2pct"]):
+            # If doesn't settle, use a large penalty based on simulation time
+            # This encourages the optimizer to find solutions that actually settle
+            settling_penalty = self.t_end + 10.0 * self.specs.settling_time_2pct
+        else:
+            # Use squared penalty to make violations more expensive
+            violation = max(
+                0.0, metrics["settling_time_2pct"] - self.specs.settling_time_2pct
+            )
+            settling_penalty = violation**2
+
+        # Encourage steady-state accuracy
+        steady_state_error = abs(metrics["steady_state"] - self.step_amplitude)
+        steady_state_error_penalty = steady_state_error**2
+
+        # Control signal limit penalty (only penalize if limit is exceeded)
+        control_signal_penalty = 0.0
+        if self.specs.max_control_signal is not None:
+            max_control_magnitude = np.max(np.abs(u))
+            
+            violation = max(0.0, max_control_magnitude - self.specs.max_control_signal)
+            control_signal_penalty = violation**2  # Squared penalty for violations
+
+        # Weighted sum cost
+        constraints = (
+            self.cost_weights.overshoot_weight * overshoot_penalty
+            + self.cost_weights.settling_time_weight * settling_penalty
+            + self.cost_weights.steady_state_error_weight * steady_state_error_penalty
+            + self.cost_weights.control_signal_limit_weight * control_signal_penalty
+        )
+        
+        objectives = (
+            self.cost_weights.settling_time_weight * metrics["settling_time_2pct"]
+        )
+        
+        # Solve the constraints before the objectives become important
+        cost = 100.0 * constraints + objectives
+
+        return cost
+
+
 def _make_objective_function(
-    plant_tf: Tuple[Sequence[float], Sequence[float]],
+    system_file: str,
     sampling_time: float,
     specs: PerformanceSpecs,
     num_order: int,
     den_order: int,
     t_end: float,
     step_amplitude: float,
-    best_record: dict,
     cost_weights: CostWeights | None = None,
-) -> callable:
+    dt: float = 0.001,
+) -> _ObjectiveFunction:
     """
     Create an objective function for controller optimization.
 
     Parameters
     ----------
-    plant_tf : tuple
-        Plant transfer function (num, den) in continuous-time
+    system_file : str
+        Path to the system.py file defining the plant
     sampling_time : float
         Sampling time in seconds
     specs : PerformanceSpecs
@@ -160,166 +489,32 @@ def _make_objective_function(
         Simulation end time
     step_amplitude : float
         Step input amplitude
-    best_record : dict
-        Dictionary to store best parameters, metrics, and cost
     cost_weights : CostWeights, optional
         Weights for cost function components. If None, uses default weights.
+    dt : float, optional
+        Time step for continuous plant simulation (default: 0.001)
 
     Returns
     -------
-    callable
-        Objective function that takes parameter vector and returns cost
+    _ObjectiveFunction
+        Objective function object that can be pickled for multiprocessing
     """
-    if cost_weights is None:
-        cost_weights = CostWeights()
-
-    def objective(param_vec: np.ndarray) -> float:
-        try:
-            controller_tf = params_to_discrete_tf(param_vec, num_order, den_order)
-            t, y, u, _ = simulate_hybrid_step_response(
-                controller_tf,
-                plant_tf,
-                sampling_time,
-                t_end=t_end,
-                step_amplitude=step_amplitude,
-            )
-            metrics = compute_step_metrics(t, y, reference=step_amplitude)
-        except Exception:
-            # Penalize unstable or failed simulations
-            return 1e6
-
-        overshoot_penalty = max(
-            0.0, metrics["percent_overshoot"] - specs.max_overshoot_pct
-        )
-
-        # Stronger penalty for settling time violations
-        settling_penalty = 0.0
-        if not np.isfinite(metrics["settling_time_2pct"]):
-            # If doesn't settle, use a large penalty based on simulation time
-            # This encourages the optimizer to find solutions that actually settle
-            settling_penalty = t_end + 10.0 * specs.settling_time_2pct
-        else:
-            # Use squared penalty to make violations more expensive
-            violation = max(
-                0.0, metrics["settling_time_2pct"] - specs.settling_time_2pct
-            )
-            settling_penalty = violation**2
-
-        # Encourage steady-state accuracy
-        steady_state_error = abs(metrics["steady_state"] - step_amplitude)
-
-        # Control signal limit penalty (only penalize if limit is exceeded)
-        control_signal_penalty = 0.0
-        if specs.max_control_signal is not None:
-            max_control_magnitude = np.max(np.abs(u))
-            
-            violation = max(0.0, max_control_magnitude - specs.max_control_signal)
-            control_signal_penalty = violation**2  # Squared penalty for violations
-
-        # Weighted sum cost
-        constraints = (
-            cost_weights.overshoot_weight * overshoot_penalty
-            + cost_weights.settling_time_weight * settling_penalty
-            + cost_weights.steady_state_error_weight * steady_state_error
-            + cost_weights.control_signal_limit_weight * control_signal_penalty
-        )
-        
-        objectives = (
-            cost_weights.settling_time_weight * metrics["settling_time_2pct"]
-        )
-        
-        # Solve the constraints before the objectives become important
-        cost = 100.0 * constraints + objectives
-
-        if cost < best_record["cost"]:
-            best_record["cost"] = cost
-            best_record["params"] = param_vec.copy()
-            best_record["metrics"] = metrics
-
-        return cost
-
-    return objective
-
-
-def _compute_cost_from_metrics(
-    metrics: dict,
-    specs: PerformanceSpecs,
-    step_amplitude: float,
-    t_end: float,
-    max_control_magnitude: float | None = None,
-    cost_weights: CostWeights | None = None,
-) -> float:
-    """
-    Compute cost from performance metrics.
-
-    This is useful when you already have metrics and control signal data,
-    without needing to run the full objective function.
-
-    Parameters
-    ----------
-    metrics : dict
-        Performance metrics from compute_step_metrics
-    specs : PerformanceSpecs
-        Performance requirements
-    step_amplitude : float
-        Step input amplitude
-    t_end : float
-        Simulation end time
-    max_control_magnitude : float, optional
-        Maximum absolute value of control signal. If None, control signal cost is 0.
-    cost_weights : CostWeights, optional
-        Weights for cost function components. If None, uses default weights.
-
-    Returns
-    -------
-    float
-        Computed cost value
-    """
-    if cost_weights is None:
-        cost_weights = CostWeights()
-
-    overshoot_penalty = max(
-        0.0, metrics["percent_overshoot"] - specs.max_overshoot_pct
+    return _ObjectiveFunction(
+        system_file=system_file,
+        sampling_time=sampling_time,
+        specs=specs,
+        num_order=num_order,
+        den_order=den_order,
+        t_end=t_end,
+        step_amplitude=step_amplitude,
+        cost_weights=cost_weights,
+        dt=dt,
     )
-
-    # Stronger penalty for settling time violations
-    settling_penalty = 0.0
-    if not np.isfinite(metrics["settling_time_2pct"]):
-        # If doesn't settle, use a large penalty based on simulation time
-        settling_penalty = t_end + 10.0 * specs.settling_time_2pct
-    else:
-        # Use squared penalty to make violations more expensive
-        violation = max(
-            0.0, metrics["settling_time_2pct"] - specs.settling_time_2pct
-        )
-        settling_penalty = violation**2
-
-    # Encourage steady-state accuracy
-    steady_state_error = abs(metrics["steady_state"] - step_amplitude)
-
-    # Control signal limit penalty (only penalize if limit is exceeded)
-    control_signal_penalty = 0.0
-    if specs.max_control_signal is not None and max_control_magnitude is not None:
-        if max_control_magnitude > specs.max_control_signal:
-            # Penalize violation of control signal limit
-            violation = max_control_magnitude - specs.max_control_signal
-            control_signal_penalty = violation**2  # Squared penalty for violations
-
-    # Weighted sum cost
-    cost = (
-        cost_weights.overshoot_weight * overshoot_penalty
-        + cost_weights.settling_time_weight * settling_penalty
-        + cost_weights.steady_state_error_weight * steady_state_error
-        + cost_weights.control_signal_limit_weight * control_signal_penalty
-    )
-
-    return cost
-
 
 def tune_discrete_controller(
-    plant_tf: Tuple[Sequence[float], Sequence[float]],
-    sampling_time: float,
-    specs: PerformanceSpecs,
+    system_file: str = "system.py",
+    sampling_time: float = 0.1,
+    specs: PerformanceSpecs | None = None,
     num_order: int = 2,
     den_order: int = 2,
     t_end: float = 5.0,
@@ -331,6 +526,12 @@ def tune_discrete_controller(
     verbose: bool = True,
     cost_weights: CostWeights | None = None,
     de_tol: float = 0.001,
+    de_atol: float = 1e-8,
+    dt: float = 0.001,
+    workers: int = -1,
+    mutation: Union[Tuple[float, float], float] = (0.75, 1.5),
+    recombination: float = 0.7,
+    strategy: str = "best1bin",
 ) -> Tuple[np.ndarray, np.ndarray, dict]:
     """
     Search for discrete controller coefficients meeting the provided specs.
@@ -340,10 +541,10 @@ def tune_discrete_controller(
 
     Parameters:
     -----------
-    plant_tf : tuple
-        Plant transfer function (num, den) in continuous-time
-    sampling_time : float
-        Sampling time in seconds
+    system_file : str, optional
+        Path to the system.py file defining the plant (default: "system.py")
+    sampling_time : float, optional
+        Sampling time in seconds (default: 0.1)
     specs : PerformanceSpecs
         Performance requirements (overshoot, settling time, control signal limit)
     num_order : int, optional
@@ -354,23 +555,45 @@ def tune_discrete_controller(
         (leading coefficient fixed at 1.0). Must be > num_order for strict properness.
         Default: 2 (2nd order denominator = 3 coefficients)
     t_end : float, optional
-        Simulation end time in seconds
+        Simulation end time in seconds (default: 5.0)
     step_amplitude : float, optional
-        Step input amplitude
+        Step input amplitude (default: 1.0)
     bounds : sequence of tuples, optional
         Parameter bounds for optimization [(min, max), ...]
     popsize : int, optional
-        Population size for differential evolution
+        Population size for differential evolution (default: 25)
     maxiter : int, optional
-        Maximum iterations for differential evolution
+        Maximum iterations for differential evolution (default: 60)
     random_state : int, optional
         Random seed for reproducibility
     verbose : bool, optional
-        Print optimization progress
+        Print optimization progress (default: True)
     cost_weights : CostWeights, optional
         Weights for cost function components. If None, uses default weights.
     de_tol : float, optional
         Convergence tolerance passed to scipy's differential_evolution (default: 0.001)
+    de_atol : float, optional
+        Absolute convergence tolerance (default: 1e-8)
+    dt : float, optional
+        Time step for continuous plant simulation (default: 0.001)
+    workers : int, optional
+        Number of parallel workers for objective function evaluation.
+        -1 uses all available CPUs, 1 disables parallelization (default: -1)
+    mutation : Union[Tuple[float, float], float], optional
+        Mutation constant. If tuple, uses dithering (random value between bounds).
+        Lower values (0.5-1.0) are more conservative, better for fine-tuning.
+        Higher values (1.0-2.0) provide more exploration. Default: (0.75, 1.5)
+    recombination : float, optional
+        Recombination constant (crossover probability). Range: 0-1.
+        Lower values (0.5-0.6) preserve stable regions better.
+        Higher values (0.8-0.9) provide more exploration. Default: 0.7
+    strategy : str, optional
+        Mutation strategy. Options:
+        - 'best1bin': Uses best solution (default, good general-purpose)
+        - 'rand1bin': Uses random solution (more exploration)
+        - 'best2bin': Uses two difference vectors (good for constrained spaces)
+        - 'rand2bin': Most exploration (good for difficult landscapes)
+        Default: 'best1bin'
 
     Returns:
     --------
@@ -386,6 +609,10 @@ def tune_discrete_controller(
     ValueError
         If num_order >= den_order (controller would not be strictly proper)
     """
+    # Validate required parameters
+    if specs is None:
+        raise ValueError("specs parameter is required")
+    
     # Validate strict properness requirement
     if num_order >= den_order:
         raise ValueError(
@@ -394,58 +621,101 @@ def tune_discrete_controller(
         )
 
     num_params = num_order + 1
-    total_params = num_params + den_order
+    # Last denominator coefficient is computed for integral action, so one fewer parameter
+    total_params = num_params + den_order - 1
+    
     if bounds is None:
         bounds = _make_default_bounds(total_params)
 
     if len(bounds) != total_params:
-        raise ValueError("Bounds must be provided for each parameter.")
-
-    best_record: dict[str, np.ndarray | dict | float | None] = {
-        "params": None,
-        "metrics": None,
-        "cost": np.inf,
-    }
+        raise ValueError(
+            f"Bounds must be provided for each parameter. "
+            f"Expected {total_params} bounds, got {len(bounds)}"
+        )
 
     objective = _make_objective_function(
-        plant_tf=plant_tf,
+        system_file=system_file,
         sampling_time=sampling_time,
         specs=specs,
         num_order=num_order,
         den_order=den_order,
         t_end=t_end,
         step_amplitude=step_amplitude,
-        best_record=best_record,
         cost_weights=cost_weights,
+        dt=dt,
     )
 
+    # Generate initial population with stable poles
+    if verbose:
+        print(f"Generating initial population of {popsize} controllers with stable poles...")
+    
+    init_pop = _make_stable_initial_population(
+        bounds=bounds,
+        popsize=popsize,
+        num_order=num_order,
+        den_order=den_order,
+    )
+    
+    if verbose:
+        print("Initial population generated successfully.")
+    
     result = differential_evolution(
         objective,
         bounds,
         popsize=popsize,
         maxiter=maxiter,
         seed=random_state,
-        polish=True,
+        init=init_pop,  # Use our stable initial population
+        polish=False,
         updating="deferred",
         disp=verbose,
         tol=de_tol,
+        atol=de_atol,
+        mutation=mutation,
+        recombination=recombination,
+        strategy=strategy,
+        workers=workers,  # Enable parallel evaluation
     )
 
-    if best_record["params"] is None:
+    # Use result.x (best parameters found by optimizer) and verify it's stable
+    best_params = result.x
+    
+    # Verify the best solution is stable by checking poles
+    try:
+        controller_tf = params_to_discrete_tf(best_params, num_order, den_order)
+        _, den = controller_tf
+        controller_poles = np.roots(den)
+        
+        # Check if any pole is outside the unit circle (unstable)
+        if np.any(np.abs(controller_poles) > 1.0 + 1e-10):
+            raise RuntimeError(
+                "Optimizer found an unstable solution. This may indicate the optimization "
+                "converged to an unstable region. Consider adjusting bounds or specs."
+            )
+    except Exception as e:
+        if isinstance(e, RuntimeError):
+            raise
         raise RuntimeError(
-            "Failed to find a stable controller within the provided bounds/specs. "
+            f"Failed to find a stable controller. Error: {e}. "
             "Consider widening bounds, relaxing specs, or adjusting controller order."
         )
-
-    best_num, best_den = params_to_discrete_tf(
-        best_record["params"], num_order, den_order
+    
+    # Re-evaluate to get metrics for the best solution
+    t, y, u, _ = simulate_system(
+        controller_tf=controller_tf,
+        system_file=system_file,
+        sampling_time=sampling_time,
+        t_end=t_end,
+        step_amplitude=step_amplitude,
+        dt=dt,
     )
-    metrics = best_record["metrics"]
+    metrics = compute_step_metrics(t, y)
+    
+    best_num, best_den = controller_tf
 
     if verbose:
         print("Tuning complete:")
         print(f"  Optimizer reported cost: {result.fun:.4f}")
-        print(f"  Best stable cost: {best_record['cost']:.4f}")
         print(f"  Controller numerator: {','.join(f'{x:.6f}' for x in best_num)}")
         print(f"  Controller denominator: {','.join(f'{x:.6f}' for x in best_den)}")
         print("  Metrics:")
@@ -453,221 +723,3 @@ def tune_discrete_controller(
             print(f"    {key}: {value:.4f}")
 
     return best_num, best_den, metrics
-
-
-def tune_discrete_controller_with_order_search(
-    plant_tf: Tuple[Sequence[float], Sequence[float]],
-    sampling_time: float,
-    specs: PerformanceSpecs,
-    num_order_range: Tuple[int, int] = (0, 3),
-    den_order_range: Tuple[int, int] = (1, 4),
-    t_end: float = 5.0,
-    step_amplitude: float = 1.0,
-    bounds: Sequence[Tuple[float, float]] | None = None,
-    popsize: int = 25,
-    maxiter: int = 60,
-    random_state: int | None = None,
-    verbose: bool = True,
-    de_tol: float = 0.001,
-    cost_weights: CostWeights | None = None,
-) -> Tuple[np.ndarray, np.ndarray, dict, int, int]:
-    """
-    Search for the best controller by trying different combinations of poles and zeros.
-
-    This function tries different combinations of numerator and denominator orders,
-    optimizes parameters for each combination, and returns the best overall result.
-
-    Parameters:
-    -----------
-    plant_tf : tuple
-        Plant transfer function (num, den) in continuous-time
-    sampling_time : float
-        Sampling time in seconds
-    specs : PerformanceSpecs
-        Performance requirements (overshoot, settling time)
-    num_order_range : tuple of int, optional
-        (min, max) range for numerator order to search. Default: (0, 3)
-    den_order_range : tuple of int, optional
-        (min, max) range for denominator order to search. Default: (1, 4)
-    t_end : float, optional
-        Simulation end time in seconds
-    step_amplitude : float, optional
-        Step input amplitude
-    bounds : sequence of tuples, optional
-        Parameter bounds for optimization. If None, uses default bounds based on order.
-    popsize : int, optional
-        Population size for differential evolution
-    maxiter : int, optional
-        Maximum iterations for differential evolution
-    random_state : int, optional
-        Random seed for reproducibility
-    verbose : bool, optional
-        Print optimization progress
-    de_tol : float, optional
-        Convergence tolerance for differential evolution (default: 0.001)
-    cost_weights : CostWeights, optional
-        Weights for cost function components. If None, uses default weights.
-
-    Returns:
-    --------
-    num : np.ndarray
-        Best numerator coefficients found
-    den : np.ndarray
-        Best denominator coefficients found
-    metrics : dict
-        Performance metrics of the best controller
-    best_num_order : int
-        Numerator order of the best controller
-    best_den_order : int
-        Denominator order of the best controller
-    """
-    num_min, num_max = num_order_range
-    den_min, den_max = den_order_range
-
-    # Generate all valid combinations (num_order < den_order for strict properness)
-    combinations = []
-    for num_order in range(num_min, num_max + 1):
-        for den_order in range(max(den_min, num_order + 1), den_max + 1):
-            combinations.append((num_order, den_order))
-
-    if len(combinations) == 0:
-        raise ValueError(
-            f"No valid combinations found. Ensure den_order_range allows values > num_order_range. "
-            f"num_order_range={num_order_range}, den_order_range={den_order_range}"
-        )
-
-    if verbose:
-        print(f"Searching over {len(combinations)} controller structures:")
-        for num_order, den_order in combinations:
-            print(
-                f"  num_order={num_order}, den_order={den_order} (degree(num)={num_order}, degree(den)={den_order})"
-            )
-        print()
-
-    best_overall = {
-        "num": None,
-        "den": None,
-        "metrics": None,
-        "cost": np.inf,
-        "num_order": None,
-        "den_order": None,
-    }
-
-    for idx, (num_order, den_order) in enumerate(combinations, 1):
-        if verbose:
-            print(f"\n{'='*60}")
-            print(
-                f"Trying combination {idx}/{len(combinations)}: num_order={num_order}, den_order={den_order}"
-            )
-            print(f"{'='*60}")
-
-        try:
-            # Use default bounds for this combination if not provided
-            # If bounds are provided, they must match the number of parameters for this combination
-            num_params = num_order + 1
-            total_params = num_params + den_order
-            if bounds is None:
-                combo_bounds = _make_default_bounds(total_params)
-            else:
-                if len(bounds) != total_params:
-                    if verbose:
-                        print(
-                            f"  ⚠ Skipping: provided bounds ({len(bounds)} params) don't match "
-                            f"this combination ({total_params} params)"
-                        )
-                    continue
-                combo_bounds = bounds
-
-            num, den, metrics = tune_discrete_controller(
-                plant_tf=plant_tf,
-                sampling_time=sampling_time,
-                specs=specs,
-                num_order=num_order,
-                den_order=den_order,
-                t_end=t_end,
-                step_amplitude=step_amplitude,
-                bounds=combo_bounds,
-                popsize=popsize,
-                maxiter=maxiter,
-                random_state=random_state,
-                verbose=False,  # Suppress individual tuning output
-                de_tol=de_tol,
-                cost_weights=cost_weights,
-            )
-
-            # Compute cost for comparison (using same cost function as optimization)
-            # Need to simulate again to get control signal for cost calculation
-            try:
-                t_test, y_test, u_test, _ = simulate_hybrid_step_response(
-                    (num, den),
-                    plant_tf,
-                    sampling_time,
-                    t_end=t_end,
-                    step_amplitude=step_amplitude,
-                )
-                max_control_magnitude = np.max(np.abs(u_test))
-            except Exception:
-                max_control_magnitude = np.inf
-
-            cost = _compute_cost_from_metrics(
-                metrics=metrics,
-                specs=specs,
-                step_amplitude=step_amplitude,
-                t_end=t_end,
-                max_control_magnitude=max_control_magnitude,
-                cost_weights=cost_weights,
-            )
-
-            if verbose:
-                control_info = ""
-                if specs.max_control_signal is not None:
-                    control_info = f", max|u|={max_control_magnitude:.4f}"
-                print(
-                    f"  Result: cost={cost:.4f}, settling_time={metrics['settling_time_2pct']:.4f}s, "
-                    f"overshoot={metrics['percent_overshoot']:.2f}%{control_info}"
-                )
-
-            # Update best if this is better
-            if cost < best_overall["cost"]:
-                best_overall["num"] = num
-                best_overall["den"] = den
-                best_overall["metrics"] = metrics
-                best_overall["cost"] = cost
-                best_overall["num_order"] = num_order
-                best_overall["den_order"] = den_order
-
-                if verbose:
-                    print(f"  ✓ New best! (cost improved to {cost:.4f})")
-
-        except Exception as e:
-            if verbose:
-                print(f"  ✗ Failed: {e}")
-            continue
-
-    if best_overall["num"] is None:
-        raise RuntimeError(
-            "Failed to find any valid controller across all tested combinations. "
-            "Consider: widening bounds, relaxing specs, or expanding order ranges."
-        )
-
-    if verbose:
-        print(f"\n{'='*60}")
-        print("BEST OVERALL CONTROLLER:")
-        print(f"{'='*60}")
-        print(
-            f"  Structure: num_order={best_overall['num_order']}, den_order={best_overall['den_order']}"
-        )
-        print(f"  Cost: {best_overall['cost']:.4f}")
-        print(f"  Numerator: {','.join(f'{x:.6f}' for x in best_overall['num'])}")
-        print(f"  Denominator: {','.join(f'{x:.6f}' for x in best_overall['den'])}")
-        print("  Metrics:")
-        for key, value in best_overall["metrics"].items():
-            print(f"    {key}: {value}")
-
-    return (
-        best_overall["num"],
-        best_overall["den"],
-        best_overall["metrics"],
-        best_overall["num_order"],
-        best_overall["den_order"],
-    )
