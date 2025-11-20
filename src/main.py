@@ -232,7 +232,3 @@ def main():
     print(f"\nPlot saved to {save_path}")
     if show_plot:
         fig.show()
-
-
-if __name__ == "__main__":
-    main()

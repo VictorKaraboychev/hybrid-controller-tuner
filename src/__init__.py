@@ -1,4 +1,4 @@
 """
-PID Tuner - Hybrid Control System Tuning Package
+Hybrid Control System Tuning Package
 """
 

@@ -504,36 +504,3 @@ def tune_discrete_controller_with_order_search(
         best_overall["num_order"],
         best_overall["den_order"],
     )
-
-
-if __name__ == "__main__":
-    """
-    Example usage for tuning a 2nd-order discrete controller.
-    """
-
-    example_specs = PerformanceSpecs(max_overshoot_pct=10.0, settling_time_2pct=1.5)
-
-    plant_num = [-2.936]
-    plant_den = [0.031, 1.0, 0.0]
-    sampling_time = 0.015
-
-    num, den, metrics = tune_discrete_controller(
-        plant_tf=(plant_num, plant_den),
-        sampling_time=sampling_time,
-        specs=example_specs,
-        num_order=1,  # Numerator order (degree)
-        den_order=2,  # Denominator order (degree) - must be > num_order for strict properness
-        t_end=5.0,
-        step_amplitude=1.0,
-        popsize=10,
-        maxiter=30,
-        random_state=42,
-        verbose=True,
-    )
-
-    print("\nBest found controller D[z]:")
-    print(f"  Numerator coefficients: {','.join(f'{x:.6f}' for x in num)}")
-    print(f"  Denominator coefficients: {','.join(f'{x:.6f}' for x in den)}")
-    print("\nClosed-loop metrics:")
-    for k, v in metrics.items():
-        print(f"  {k}: {v}")
