@@ -71,7 +71,7 @@ def main():
     # Load parameters from system.py
     system_file = "system.py"
     system_module = load_system_module(system_file)
-    
+
     # Extract performance specs (required)
     if not hasattr(system_module, "specs"):
         raise AttributeError(
@@ -81,12 +81,14 @@ def main():
     specs = system_module.specs
     if not isinstance(specs, PerformanceSpecs):
         raise TypeError(f"specs must be a PerformanceSpecs instance, got {type(specs)}")
-    
+
     # Extract cost weights (optional)
     cost_weights = getattr(system_module, "cost_weights", None)
     if cost_weights is not None and not isinstance(cost_weights, CostWeights):
-        raise TypeError(f"cost_weights must be a CostWeights instance, got {type(cost_weights)}")
-    
+        raise TypeError(
+            f"cost_weights must be a CostWeights instance, got {type(cost_weights)}"
+        )
+
     # Extract system parameters (required)
     if not hasattr(system_module, "system_params"):
         raise AttributeError(
@@ -95,29 +97,32 @@ def main():
         )
     system_params = system_module.system_params
     if not isinstance(system_params, SystemParameters):
-        raise TypeError(f"system_params must be a SystemParameters instance, got {type(system_params)}")
-    
+        raise TypeError(
+            f"system_params must be a SystemParameters instance, got {type(system_params)}"
+        )
+
     # Extract optimization parameters (optional with defaults)
     optimization_params = getattr(system_module, "optimization_params", None)
     if optimization_params is None:
         optimization_params = OptimizationParameters()  # Use defaults
     elif not isinstance(optimization_params, OptimizationParameters):
-        raise TypeError(f"optimization_params must be an OptimizationParameters instance, got {type(optimization_params)}")
-    
+        raise TypeError(
+            f"optimization_params must be an OptimizationParameters instance, got {type(optimization_params)}"
+        )
+
     # Extract output paths (optional)
     output_json_path = getattr(system_module, "output_json", "output/controller.json")
     save_path = Path(getattr(system_module, "save_path", "output/response.png"))
 
-    # All denominator coefficients except the leading one (fixed at 1.0) come from parameters
-    total_params = (system_params.num_order + 1) + system_params.den_order
-    bounds = [(-optimization_params.bound_mag, optimization_params.bound_mag)] * total_params
+    # Get num_parameters from system_params
+    bounds = [
+        (-optimization_params.bound_mag, optimization_params.bound_mag)
+    ] * system_params.num_parameters
 
-    num, den, metrics = tune_discrete_controller(
+    params, metrics = tune_discrete_controller(
         system_file=system_file,
-        sampling_time=system_params.sampling_time,
         specs=specs,
-        num_order=system_params.num_order,
-        den_order=system_params.den_order,
+        num_parameters=system_params.num_parameters,
         t_end=system_params.t_end,
         step_amplitude=system_params.step_amplitude,
         bounds=bounds,
@@ -135,31 +140,15 @@ def main():
         strategy=optimization_params.strategy,
     )
 
-    print("\n=== Tuned Controller ===")
-    print(f"num = [{','.join(f'{x:.6f}' for x in num)}];")
-    print(f"den = [{','.join(f'{x:.6f}' for x in den)}];")
+    print("\n=== Tuned Parameters ===")
+    print(f"params = [{','.join(f'{x:.6f}' for x in params)}];")
     print("Metrics from tuning run:")
     for key, value in metrics.items():
         print(f"  {key}: {value:.4f}")
 
-    # Save to JSON
-    output_path = Path(output_json_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    save_controller_to_json(
-        output_path,
-        num,
-        den,
-        metrics,
-        num_order=system_params.num_order,
-        den_order=system_params.den_order,
-        sampling_time=system_params.sampling_time,
-    )
-    print(f"\nController saved to: {output_path}")
-
     t, y, u, e = simulate_system(
-        controller_tf=(num, den),
+        params=params,
         system_file=system_file,
-        sampling_time=system_params.sampling_time,
         t_end=system_params.t_end,
         step_amplitude=system_params.step_amplitude,
         dt=system_params.dt,
@@ -174,6 +163,5 @@ def main():
         final_metrics,
         step_amplitude=system_params.step_amplitude,
         save_path=str(save_path),
-        controller_tf=(num, den),
     )
     print(f"\nPlot saved to {save_path}")

@@ -15,14 +15,14 @@ from scipy import signal
 class ContinuousTF:
     """
     Continuous-time transfer function block.
-    
+
     Represents a transfer function in the s-domain: G(s) = num(s) / den(s)
     where num and den are polynomial coefficients in descending powers of s.
-    
+
     This block maintains internal state-space representation for step-by-step
     simulation. For continuous-time systems, the output is computed by integrating
     the state-space equations.
-    
+
     Parameters
     ----------
     num : array-like
@@ -34,16 +34,16 @@ class ContinuousTF:
     dt : float
         Integration time step for continuous-time simulation (seconds)
     """
-    
+
     def __init__(self, num, den, dt=0.001):
         self.num = np.array(num, dtype=float)
         self.den = np.array(den, dtype=float)
         self.dt = dt
-        
+
         # Convert to state-space for step-by-step simulation
         try:
             ss_result = signal.tf2ss(self.num, self.den)
-            
+
             # Handle both tuple (A, B, C, D) and StateSpace object returns
             if isinstance(ss_result, tuple):
                 # Newer scipy versions return (A, B, C, D) tuple
@@ -58,24 +58,24 @@ class ContinuousTF:
                 self.B = np.array(ss_result.B)
                 self.C = np.array(ss_result.C)
                 self.D = np.array(ss_result.D)
-            
+
             self.state = np.zeros((self.A.shape[0],))
             self.last_input = 0.0
             self.y = 0.0  # Last output value
         except Exception as e:
             raise ValueError(f"Failed to convert transfer function to state-space: {e}")
-    
+
     def get_output(self, u):
         """
         Get current output without stepping the state.
-        
+
         Computes output from current state: y = C*x + D*u
-        
+
         Parameters
         ----------
         u : float
             Current input signal
-            
+
         Returns
         -------
         y : float
@@ -88,21 +88,21 @@ class ContinuousTF:
                 y = y + self.D @ np.array([u])
             else:
                 y = y + self.D * u
-        
+
         return y.flatten()[0] if y.size > 0 else 0.0
-    
+
     def step(self, u):
         """
         Step the continuous-time transfer function with input u.
-        
+
         Uses numerical integration (Euler method) to update the state.
         For a state-space system: dx/dt = A*x + B*u, y = C*x + D*u
-        
+
         Parameters
         ----------
         u : float
             Input signal at current time step
-            
+
         Returns
         -------
         y : float
@@ -110,28 +110,54 @@ class ContinuousTF:
         """
         # Get output before stepping (for the current state)
         y = self.get_output(u)
-        
+
         # Update state using Euler integration
         # x[k+1] = x[k] + dt * (A*x[k] + B*u)
         B_flat = self.B.flatten() if self.B.ndim > 1 else self.B
         dx = self.A @ self.state + B_flat * u
         self.state = self.state + self.dt * dx
-        
+
         self.last_input = u
         self.y = y  # Store last output
         return y
-    
+
     def reset(self):
         """Reset the internal state to zero."""
         self.state = np.zeros((self.A.shape[0],))
         self.last_input = 0.0
         self.y = 0.0
-    
+
+    def is_stable(self, tol: float = 1e-10) -> bool:
+        """
+        Check if the continuous-time transfer function is stable.
+
+        A continuous-time system is stable if all poles are in the left half plane
+        (i.e., Re(s) < 0 for all poles).
+
+        Parameters
+        ----------
+        tol : float, optional
+            Tolerance for checking if real part is zero (default: 1e-10)
+
+        Returns
+        -------
+        bool
+            True if all poles are in the left half plane, False otherwise
+        """
+        # Find poles by computing roots of denominator polynomial
+        poles = np.roots(self.den)
+
+        # Check if all poles have negative real parts
+        # For stability: Re(pole) < 0 for all poles
+        return np.all(np.real(poles) < -tol)
+
     @classmethod
-    def from_params(cls, params: np.ndarray, num_order: int, den_order: int, dt: float = 0.001):
+    def from_params(
+        cls, params: np.ndarray, num_order: int, den_order: int, dt: float = 0.001
+    ):
         """
         Create a ContinuousTF block from parameter array.
-        
+
         Parameters
         ----------
         params : np.ndarray
@@ -144,7 +170,7 @@ class ContinuousTF:
             Denominator order (degree)
         dt : float, optional
             Integration time step (default: 0.001)
-            
+
         Returns
         -------
         ContinuousTF
@@ -152,7 +178,7 @@ class ContinuousTF:
         """
         num_coeffs = num_order + 1
         num = params[:num_coeffs]
-        den_rest = params[num_coeffs:num_coeffs + den_order]
+        den_rest = params[num_coeffs : num_coeffs + den_order]
         den = np.concatenate(([1.0], den_rest))
         return cls(num=num, den=den, dt=dt)
 
@@ -160,15 +186,15 @@ class ContinuousTF:
 class DiscreteTF:
     """
     Discrete-time transfer function block with zero-order hold.
-    
+
     Represents a transfer function in the z-domain: G(z) = num(z) / den(z)
     where num and den are polynomial coefficients in descending powers of z.
-    
+
     This block automatically applies zero-order hold (ZOH) internally. The ZOH
     is applied by discretizing the transfer function using the sampling time.
-    
+
     Uses scipy's dlti for reliable difference equation implementation.
-    
+
     Parameters
     ----------
     num : array-like
@@ -181,30 +207,30 @@ class DiscreteTF:
         Sampling time Ts in seconds. This is used for ZOH discretization
         if the transfer function is originally continuous.
     """
-    
+
     def __init__(self, num, den, sampling_time):
         self.num = np.array(num, dtype=float)
         self.den = np.array(den, dtype=float)
         self.sampling_time = sampling_time
-        
+
         # Normalize denominator (leading coefficient should be 1.0)
         if self.den[0] != 1.0 and self.den[0] != 0:
             self.num = self.num / self.den[0]
             self.den = self.den / self.den[0]
-        
+
         # Convert from descending powers of z to scipy format
         # Scipy's dlti expects coefficients in ascending powers of z^-1
         # When degrees match: dividing by z gives same coefficient order
         # Example: (z + 0.5)/(z - 0.5) = (1 + 0.5*z^-1)/(1 - 0.5*z^-1)
         # So [1, 0.5] in descending z is [1, 0.5] in ascending z^-1 (same order!)
-        
+
         # Pass coefficients directly to scipy (no padding needed)
         num_scipy = self.num
         den_scipy = self.den
-        
+
         # Create scipy discrete-time system
         self.sys = signal.dlti(num_scipy, den_scipy, dt=sampling_time)
-        
+
         # Get state-space representation for step-by-step simulation
         # scipy's dlti.to_ss() gives us the state-space form
         ss = self.sys.to_ss()
@@ -212,32 +238,32 @@ class DiscreteTF:
         self.B = ss.B
         self.C = ss.C
         self.D = ss.D
-        
+
         # Initialize state for state-space simulation
         self.state = np.zeros((self.A.shape[0],))
-        
+
         # For sampling control
         self.last_sample_time = -np.inf  # Initialize to allow first sample
         self.last_output = 0.0  # ZOH output between samples
         self.y = 0.0  # Last output value (accessible via tf.y)
-    
+
     def step(self, t, u):
         """
         Step the discrete-time transfer function with input u.
-        
+
         This method handles discrete sampling automatically. It only updates the controller
         state at discrete sample times (every sampling_time seconds). Between samples,
         it returns the last output (zero-order hold behavior).
-        
+
         Uses scipy's state-space representation for accurate difference equation computation.
-        
+
         Parameters
         ----------
         t : float
             Current time (seconds)
         u : float
             Input signal at current time
-            
+
         Returns
         -------
         y : float
@@ -248,15 +274,17 @@ class DiscreteTF:
             # Time to sample - update controller state using state-space form
             # For discrete state-space: x[k+1] = A*x[k] + B*u[k], y[k] = C*x[k] + D*u[k]
             # Note: output is computed from current state x[k], then state is updated to x[k+1]
-            
+
             # Compute output from current state (before updating)
             # y[k] = C*x[k] + D*u[k]
             y = (self.C @ self.state).flatten()
             if self.D.size > 0 and np.any(self.D != 0):
-                u_vec = np.array([[u]]) if np.isscalar(u) else np.array([u]).reshape(-1, 1)
+                u_vec = (
+                    np.array([[u]]) if np.isscalar(u) else np.array([u]).reshape(-1, 1)
+                )
                 y = y + (self.D @ u_vec).flatten()
             y = float(y[0]) if y.size > 0 else 0.0
-            
+
             # Update state for next sample: x[k+1] = A*x[k] + B*u[k]
             if self.B.ndim == 1:
                 # B is a 1D array (column vector)
@@ -273,7 +301,7 @@ class DiscreteTF:
             else:
                 # Fallback
                 self.state = self.A @ self.state + self.B * u
-            
+
             # Store output and update sample time
             self.last_output = y
             self.y = y  # Store last output (accessible via tf.y)
@@ -282,19 +310,45 @@ class DiscreteTF:
         else:
             # Between samples - return last output (ZOH)
             return self.last_output
-    
+
     def reset(self):
         """Reset the internal state to zero."""
         self.state = np.zeros((self.A.shape[0],))
         self.last_sample_time = -np.inf
         self.last_output = 0.0
         self.y = 0.0
-    
+
+    def is_stable(self, tol: float = 1e-10) -> bool:
+        """
+        Check if the discrete-time transfer function is stable.
+
+        A discrete-time system is stable if all poles are inside the open unit disk
+        (i.e., |z| < 1 for all poles).
+
+        Parameters
+        ----------
+        tol : float, optional
+            Tolerance for checking if magnitude is 1 (default: 1e-10)
+
+        Returns
+        -------
+        bool
+            True if all poles are inside the open unit disk, False otherwise
+        """
+        # Find poles by computing roots of denominator polynomial
+        poles = np.roots(self.den)
+
+        # Check if all poles are inside the open unit disk
+        # For stability: |pole| < 1 for all poles
+        return np.all(np.abs(poles) < 1.0 - tol)
+
     @classmethod
-    def from_params(cls, params: np.ndarray, num_order: int, den_order: int, sampling_time: float):
+    def from_params(
+        cls, params: np.ndarray, num_order: int, den_order: int, sampling_time: float
+    ):
         """
         Create a DiscreteTF block from parameter array.
-        
+
         Parameters
         ----------
         params : np.ndarray
@@ -307,7 +361,7 @@ class DiscreteTF:
             Denominator order (degree)
         sampling_time : float
             Sampling time in seconds
-            
+
         Returns
         -------
         DiscreteTF
@@ -315,7 +369,7 @@ class DiscreteTF:
         """
         num_coeffs = num_order + 1
         num = params[:num_coeffs]
-        den_rest = params[num_coeffs:num_coeffs + den_order]
+        den_rest = params[num_coeffs : num_coeffs + den_order]
         den = np.concatenate(([1.0], den_rest))
         return cls(num=num, den=den, sampling_time=sampling_time)
 
@@ -323,9 +377,9 @@ class DiscreteTF:
 class Saturation:
     """
     Saturation/limiting block.
-    
+
     Constrains a signal between minimum and maximum values.
-    
+
     Parameters
     ----------
     min_val : float or None
@@ -333,55 +387,55 @@ class Saturation:
     max_val : float or None
         Maximum output value. If None, no upper limit is applied.
     """
-    
+
     def __init__(self, min_val=None, max_val=None):
         self.min_val = min_val
         self.max_val = max_val
-        
+
         # Validate that min <= max if both are provided
         if min_val is not None and max_val is not None:
             if min_val > max_val:
                 raise ValueError(f"min_val ({min_val}) must be <= max_val ({max_val})")
-    
+
     def step(self, u):
         """
         Apply saturation to input signal.
-        
+
         Parameters
         ----------
         u : float
             Input signal
-            
+
         Returns
         -------
         y : float
             Saturated output signal
         """
         y = u
-        
+
         if self.min_val is not None:
             y = max(self.min_val, y)
         if self.max_val is not None:
             y = min(self.max_val, y)
-        
+
         return y
-    
+
     def reset(self):
         """Reset the block (no-op for saturation, but included for consistency)."""
         pass
-    
+
     @classmethod
     def from_params(cls, params: np.ndarray):
         """
         Create a Saturation block from parameter array.
-        
+
         Parameters
         ----------
         params : np.ndarray
             Parameter array: [min_val, max_val] or [min_val] or [max_val]
             If length 1: only that limit is set (min if negative, max if positive)
             If length 2: [min_val, max_val]
-            
+
         Returns
         -------
         Saturation
@@ -396,18 +450,20 @@ class Saturation:
         elif len(params) == 2:
             return cls(min_val=params[0], max_val=params[1])
         else:
-            raise ValueError(f"Saturation from_params expects 1 or 2 parameters, got {len(params)}")
+            raise ValueError(
+                f"Saturation from_params expects 1 or 2 parameters, got {len(params)}"
+            )
 
 
 class PID:
     """
     Discrete-time PID controller block.
-    
+
     Implements a PID controller in the z-domain with the form:
     C(z) = Kp + Ki*Ts*z/(z-1) + Kd*N*(z-1)/(z + N - 1)
-    
+
     where N = Ts/Tf is the derivative filter coefficient.
-    
+
     Parameters
     ----------
     Kp : float
@@ -422,59 +478,66 @@ class PID:
     sampling_time : float
         Sampling time Ts in seconds
     """
-    
-    def __init__(self, Kp: float, Ki: float, Kd: float, sampling_time: float, Tf: float | None = None):
+
+    def __init__(
+        self,
+        Kp: float,
+        Ki: float,
+        Kd: float,
+        sampling_time: float,
+        Tf: float | None = None,
+    ):
         self.Kp = float(Kp)
         self.Ki = float(Ki)
         self.Kd = float(Kd)
         self.sampling_time = float(sampling_time)
         self.Tf = float(Tf) if Tf is not None else 0.1 * self.sampling_time
-        
+
         # Convert to discrete transfer function form
         # C(z) = Kp + Ki*Ts*z/(z-1) + Kd*N*(z-1)/(z + N - 1)
         # where N = Ts/Tf (derivative filter coefficient)
-        
+
         Ts = self.sampling_time
         N = Ts / self.Tf if self.Tf > 0 else 1.0
-        
+
         # Common denominator: (z-1)*(z+N-1) = z^2 + (N-2)*z + (1-N)
         # Numerator: Kp*(z-1)*(z+N-1) + Ki*Ts*z*(z+N-1) + Kd*N*(z-1)^2
-        
+
         # Expand each term:
         # Kp*(z-1)*(z+N-1) = Kp*(z^2 + (N-2)*z + (1-N))
         # Ki*Ts*z*(z+N-1) = Ki*Ts*(z^2 + (N-1)*z)
         # Kd*N*(z-1)^2 = Kd*N*(z^2 - 2*z + 1)
-        
+
         # Combine coefficients:
         num_coeffs = [
             self.Kp + self.Ki * Ts + self.Kd * N,  # z^2 coefficient
-            self.Kp * (N - 2) + self.Ki * Ts * (N - 1) - 2 * self.Kd * N,  # z coefficient
-            self.Kp * (1 - N) + self.Kd * N  # constant coefficient
+            self.Kp * (N - 2)
+            + self.Ki * Ts * (N - 1)
+            - 2 * self.Kd * N,  # z coefficient
+            self.Kp * (1 - N) + self.Kd * N,  # constant coefficient
         ]
-        
+
         # Denominator: (z-1)*(z+N-1) = z^2 + (N-2)*z + (1-N)
         den_coeffs = [1.0, N - 2, 1 - N]
-        
+
         # Create as DiscreteTF internally
         self._discrete_tf = DiscreteTF(
-            num=num_coeffs,
-            den=den_coeffs,
-            sampling_time=sampling_time
+            num=num_coeffs, den=den_coeffs, sampling_time=sampling_time
         )
-        
+
         self.y = 0.0  # Last output value
-    
+
     def step(self, t: float, u: float) -> float:
         """
         Step the PID controller with input u.
-        
+
         Parameters
         ----------
         t : float
             Current time (seconds)
         u : float
             Input signal (error)
-            
+
         Returns
         -------
         y : float
@@ -483,17 +546,19 @@ class PID:
         y = self._discrete_tf.step(t, u)
         self.y = y
         return y
-    
+
     def reset(self):
         """Reset the internal state to zero."""
         self._discrete_tf.reset()
         self.y = 0.0
-    
+
     @classmethod
-    def from_params(cls, params: np.ndarray, sampling_time: float, Tf: float | None = None):
+    def from_params(
+        cls, params: np.ndarray, sampling_time: float, Tf: float | None = None
+    ):
         """
         Create a PID block from parameter array.
-        
+
         Parameters
         ----------
         params : np.ndarray
@@ -504,22 +569,23 @@ class PID:
             Sampling time in seconds
         Tf : float, optional
             Derivative filter time constant (overrides params[3] if provided)
-            
+
         Returns
         -------
         PID
             PID block instance
         """
         if len(params) < 3:
-            raise ValueError(f"PID from_params expects at least 3 parameters [Kp, Ki, Kd], got {len(params)}")
-        
+            raise ValueError(
+                f"PID from_params expects at least 3 parameters [Kp, Ki, Kd], got {len(params)}"
+            )
+
         Kp = params[0]
         Ki = params[1]
         Kd = params[2]
-        
+
         # Tf can come from params or be provided separately
         if len(params) >= 4 and Tf is None:
             Tf = params[3]
-        
-        return cls(Kp=Kp, Ki=Ki, Kd=Kd, sampling_time=sampling_time, Tf=Tf)
 
+        return cls(Kp=Kp, Ki=Ki, Kd=Kd, sampling_time=sampling_time, Tf=Tf)

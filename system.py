@@ -2,23 +2,8 @@
 User-defined control system.
 
 This file defines the control system using the system building blocks.
-The `system` function is called by the tuner with the controller, reference `r`,
-and time `t`, and returns error `e`, control signal `u`, and new output `y`.
-
-The function signature is:
-    def system(controller, r, t):
-        ...
-        return e, u, y
-
-Where:
-    controller: DiscreteTF controller block
-    r: Reference/input signal at current time step
-    t: Current time (seconds)
-    e: Error signal (typically r - p2.y for final output)
-    u: Control signal
-    y: New output signal
-
-Note: Use transfer function .y attributes (e.g., p1.y, p2.y) to access last outputs.
+The System class takes optimization parameters and creates the optimized block,
+then provides a step method to run the system simulation.
 """
 
 import numpy as np
@@ -36,92 +21,110 @@ SIMULATION_DT = 0.015
 # Define your plant blocks here
 # ============================================================================
 
-s1 = Saturation(min_val=-0.7, max_val=0.7)
-
-d2 = DiscreteTF(
-    num=[-1.6437408920219747, 1.477660476362062, 0.08838959630344201, 0.07772974353397721],
-    den=[1.0, -1.6565270508810168, 0.36370233042832245, 0.8084480013102704, -0.515623280857576],
-    sampling_time=0.015
-)
-
-s2 = Saturation(min_val=-6.0, max_val=6.0)
-
-p2 = ContinuousTF(
-    num=[-2.936],
-    den=[0.031, 1.0, 0.0],
-    dt=SIMULATION_DT
-)
-
-p1 = ContinuousTF(
-    num=[-0.258873],
-    den=[1.0, 0.0, 0.0],
-    dt=SIMULATION_DT
-)
+# These will be created as instance variables in the System class
 
 # ============================================================================
-# System function
+# System class
 # ============================================================================
 
-def system(d_controller, r, t):
-    """
-    Control system function.
-    
-    This function is called by the tuner at each discrete time step with the controller,
-    reference signal, and current time. It computes the error, control signal, and new output.
-    
-    Parameters
-    ----------
-    controller : DiscreteTF
-        Discrete-time controller block
-    r : float
-        Reference/input signal at current time step
-    t : float
-        Current time (seconds)
-        
-    Returns
-    -------
-    e : float
-        Error signal
-    u : float
-        Control signal
-    y : float
-        New output signal
-    """
-    
-    # Outer Error
-    e1 = r - p1.y
-    
-    # Outer Controller
-    u1 = d_controller.step(t, e1)
-    # u1 = s1.step(u1)
-        
-    # # Inner Error
-    # e2 = u1 - p2.y
-    
-    # # Inner Controller
-    # u2 = d2.step(t, e2)
-    # u2 = s2.step(u2)
-    
-    # # Inner Plant
-    # y2 = p2.step(u2)
-    
-    # Outer Plant
-    y1 = p1.step(u1)
-    
-    return e1, u1, y1
 
+class System:
+    """
+    Control system class that can be optimized.
 
-def reset():
+    Takes optimization parameters in __init__ to create the optimized block,
+    and provides a step method to run the system simulation at each time step.
     """
-    Reset all blocks to their initial state.
-    
-    This should be called at the start of a new simulation.
-    """
-    p1.reset()
-    s1.reset()
-    d2.reset()
-    s2.reset()
-    p2.reset()
+
+    def __init__(self, params: np.ndarray):
+        """
+        Initialize the system with optimization parameters.
+
+        Parameters
+        ----------
+        params : np.ndarray
+            Array of optimization parameters. The System class determines how
+            these parameters are interpreted. For discrete controller optimization,
+            these are [num_coeffs..., den_coeffs...] where the number of coefficients
+            is determined by system_params.num_order and system_params.den_order.
+        """
+
+        # Create plant blocks (these are fixed, not optimized)
+        self.s1 = Saturation(min_val=-0.7, max_val=0.7)
+
+        self.d2 = DiscreteTF(
+            num=[
+                -1.6437408920219747,
+                1.477660476362062,
+                0.08838959630344201,
+                0.07772974353397721,
+            ],
+            den=[
+                1.0,
+                -1.6565270508810168,
+                0.36370233042832245,
+                0.8084480013102704,
+                -0.515623280857576,
+            ],
+            sampling_time=0.015,
+        )
+
+        self.s2 = Saturation(min_val=-6.0, max_val=6.0)
+
+        self.p2 = ContinuousTF(num=[-2.936], den=[0.031, 1.0, 0.0], dt=SIMULATION_DT)
+
+        self.p1 = ContinuousTF(num=[-0.258873], den=[1.0, 0.0, 0.0], dt=SIMULATION_DT)
+
+        # Create the optimized controller block using from_params
+        # For 4 parameters: num_order=1, den_order=2 gives (1+1) + 2 = 4 parameters
+        self.d_controller = DiscreteTF.from_params(
+            params=params,
+            num_order=1,
+            den_order=2,
+            sampling_time=0.5,
+        )
+
+    def step(self, r: float, t: float):
+        """
+        Step the control system with reference signal and time.
+
+        Parameters
+        ----------
+        r : float
+            Reference/input signal at current time step.
+        t : float
+            Current time (seconds).
+
+        Returns
+        -------
+        e : float
+            Error signal.
+        u : float
+            Control signal.
+        y : float
+            New output signal.
+        """
+        # Outer Error
+        e1 = r - self.p1.y
+
+        # Outer Controller
+        u1 = self.d_controller.step(t, e1)
+        # u1 = self.s1.step(u1)
+
+        # # Inner Error
+        # e2 = u1 - self.p2.y
+
+        # # Inner Controller
+        # u2 = self.d2.step(t, e2)
+        # u2 = self.s2.step(u2)
+
+        # # Inner Plant
+        # y2 = self.p2.step(u2)
+
+        # Outer Plant
+        y1 = self.p1.step(u1)
+
+        return e1, u1, y1
 
 
 # ============================================================================
@@ -130,9 +133,9 @@ def reset():
 
 # Performance specifications for controller tuning (required)
 specs = PerformanceSpecs(
-    max_overshoot_pct=45.0,      # Maximum allowed percent overshoot
-    settling_time_2pct=7.0,     # Required 2% settling time (seconds)
-    max_control_signal=0.7,      # Maximum allowed control signal (None for no limit)
+    max_overshoot_pct=45.0,  # Maximum allowed percent overshoot
+    settling_time_2pct=7.0,  # Required 2% settling time (seconds)
+    max_control_signal=0.7,  # Maximum allowed control signal (None for no limit)
 )
 
 # Cost function weights (optional - uses defaults if None)
@@ -143,25 +146,22 @@ cost_weights = CostWeights(
     control_signal_limit_weight=2.0,
 )
 
-# System parameters (required)
 system_params = SystemParameters(
-    sampling_time=0.5,          # Sampling time for discrete controller (seconds)
-    num_order=1,                # Numerator order (degree)
-    den_order=1,                # Denominator order (degree)
-    t_end=15.0,                 # Simulation end time (seconds)
-    step_amplitude=0.15,        # Step input amplitude
-    dt=SIMULATION_DT,           # Time step for continuous plant simulation (seconds)
+    num_parameters=4,  # Total number of optimization parameters
+    t_end=15.0,  # Simulation end time (seconds)
+    step_amplitude=0.15,  # Step input amplitude
+    dt=SIMULATION_DT,  # Time step for continuous plant simulation (seconds)
 )
 
 # Optimization parameters (optional - uses defaults if None)
 optimization_params = OptimizationParameters(
-    population=100,             # Population size for differential evolution
-    max_iterations=4000,       # Maximum iterations for optimization
-    de_tol=0.01,                 # Convergence tolerance (0.0 to disable early stopping)
-    bound_mag=2.0,              # Magnitude of parameter bounds (symmetric: [-bound_mag, bound_mag])
-    random_state=None,          # Random seed for reproducibility (None for random)
-    verbose=True,               # Print optimization progress
-    workers=-1,                 # Use all available CPUs for parallel evaluation
+    population=50,  # Population size for differential evolution
+    max_iterations=4000,  # Maximum iterations for optimization
+    de_tol=0.01,  # Convergence tolerance (0.0 to disable early stopping)
+    bound_mag=2.0,  # Magnitude of parameter bounds (symmetric: [-bound_mag, bound_mag])
+    random_state=None,  # Random seed for reproducibility (None for random)
+    verbose=True,  # Print optimization progress
+    workers=-1,  # Use all available CPUs for parallel evaluation
     # mutation=(0.5, 1.9),        # Conservative mutation for fine-tuning near stable regions
     # recombination=0.6,          # Lower recombination to preserve stable regions better
     # strategy='best2bin',        # Best strategy for constrained stability spaces
@@ -169,4 +169,4 @@ optimization_params = OptimizationParameters(
 
 # Output paths (optional)
 output_json = "output/outer_controller.json"  # Path to save controller JSON
-save_path = "output/outer_response.png"        # Path to save response plot
+save_path = "output/outer_response.png"  # Path to save response plot

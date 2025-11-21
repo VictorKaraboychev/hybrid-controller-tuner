@@ -4,6 +4,7 @@ Plotting utilities for visualizing hybrid control system responses.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -64,7 +65,9 @@ def plot_hybrid_response(
     settling_time = metrics["settling_time_2pct"]
 
     axes[0].plot(t, y, "b-", linewidth=2, label="Output y(t)")
-    axes[0].axhline(step_amplitude, color="k", linestyle=":", alpha=0.7, label="Reference")
+    axes[0].axhline(
+        step_amplitude, color="k", linestyle=":", alpha=0.7, label="Reference"
+    )
     axes[0].axhline(steady, color="r", linestyle="--", alpha=0.6, label="Steady State")
     axes[0].fill_between(
         t, steady - band, steady + band, color="orange", alpha=0.15, label="±2% Band"
@@ -73,12 +76,14 @@ def plot_hybrid_response(
     axes[0].annotate(
         f"Peak {y[peak_idx]:.3f}",
         xy=(t[peak_idx], y[peak_idx]),
-        xytext=(1.1 * t[peak_idx], 0.9 *y[peak_idx]),
+        xytext=(1.1 * t[peak_idx], 0.9 * y[peak_idx]),
         arrowprops=dict(arrowstyle="->", color="m"),
         fontsize=9,
     )
     if np.isfinite(settling_time):
-        axes[0].axvline(settling_time, color="g", linestyle="-.", label="2% Settling Time")
+        axes[0].axvline(
+            settling_time, color="g", linestyle="-.", label="2% Settling Time"
+        )
         axes[0].annotate(
             f"Ts = {settling_time:.3f}s",
             xy=(settling_time, 0.0),
@@ -92,16 +97,12 @@ def plot_hybrid_response(
     axes[0].set_title("Step Response - Output")
     axes[0].legend(loc="best")
 
-    # Plot control signal as ZOH (step function) - constant between samples
-    # Create step-like plot for ZOH representation
-    t_zoh = np.repeat(t, 2)[1:]  # Duplicate time points for step
-    u_zoh = np.repeat(u, 2)[:-1]  # Duplicate u values for step
-    axes[1].plot(t_zoh, u_zoh, "g-", linewidth=2, label="Control u[k] (ZOH)", drawstyle="steps-post")
-    axes[1].plot(t, u, "go", markersize=4, alpha=0.6, label="Sampled u[k]")
+    # Plot control signal u(t)
+    axes[1].plot(t, u, "g-", linewidth=2, label="Control u(t)")
     axes[1].grid(True, alpha=0.3)
     axes[1].set_xlabel("Time (s)")
     axes[1].set_ylabel("Control Signal")
-    axes[1].set_title("Control Signal (Zero-Order Hold)")
+    axes[1].set_title("Control Signal")
     axes[1].legend()
 
     axes[2].plot(t, e, "r-", linewidth=2, label="Error e(t) = r(t) - y(t)")
@@ -124,7 +125,13 @@ def plot_hybrid_response(
         # Plot unit circle
         theta = np.linspace(0, 2 * np.pi, 200)
         unit_circle = np.exp(1j * theta)
-        axes[3].plot(unit_circle.real, unit_circle.imag, "k--", linewidth=1.5, label="Unit Circle")
+        axes[3].plot(
+            unit_circle.real,
+            unit_circle.imag,
+            "k--",
+            linewidth=1.5,
+            label="Unit Circle",
+        )
 
         # Plot poles (x markers)
         if len(poles) > 0:
@@ -163,6 +170,8 @@ def plot_hybrid_response(
 
     plt.tight_layout(rect=[0, 0, 0.95, 1])  # Leave space on right for legend
     if save_path:
+        # Create output directory if it doesn't exist
+        save_path_obj = Path(save_path)
+        save_path_obj.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
     return fig, axes
-
