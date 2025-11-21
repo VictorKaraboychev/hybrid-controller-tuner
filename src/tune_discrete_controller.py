@@ -203,7 +203,7 @@ class _ObjectiveFunction:
             )
 
         steady_state_error_penalty = (
-            abs(metrics["steady_state"] - self.step_amplitude) ** 2
+            abs(metrics["steady_state"] - self.step_amplitude) / self.step_amplitude
         )
 
         # Control signal limit penalty
@@ -341,44 +341,12 @@ def tune_discrete_controller(
         dt=dt,
     )
 
-    # Generate initial population with smaller I and D gains if using PID (3 parameters)
-    # For PID: params = [Kp, Ki, Kd]
-    if num_parameters == 3:
-        # Initialize with smaller Ki and Kd for better stability
-        init_pop = []
-        for _ in range(popsize):
-            individual = []
-            # Kp: use full bounds
-            individual.append(np.random.uniform(bounds[0][0], bounds[0][1]))
-            # Ki: use smaller range (typically 0.1x the bound range, centered around 0)
-            ki_range = min(abs(bounds[1][0]), abs(bounds[1][1])) * 0.1
-            individual.append(np.random.uniform(-ki_range, ki_range))
-            # Kd: use smaller range (typically 0.1x the bound range, centered around 0)
-            kd_range = min(abs(bounds[2][0]), abs(bounds[2][1])) * 0.1
-            individual.append(np.random.uniform(-kd_range, kd_range))
-            init_pop.append(np.array(individual))
-        init_pop = np.array(init_pop)
-    else:
-        # For other parameter counts, use uniform random initialization
-        init_pop = np.array(
-            [
-                np.array([np.random.uniform(low, high) for low, high in bounds])
-                for _ in range(popsize)
-            ]
-        )
-
-    if verbose:
-        print(f"Generating initial population of {popsize} individuals...")
-        if num_parameters == 3:
-            print("  Using smaller initial ranges for I and D gains (PID controller)")
-
     result = differential_evolution(
         objective,
         bounds,
         popsize=popsize,
         maxiter=maxiter,
         seed=random_state,
-        init=init_pop,
         polish=False,
         updating="deferred",
         disp=verbose,

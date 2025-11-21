@@ -65,32 +65,6 @@ class ContinuousTF:
         except Exception as e:
             raise ValueError(f"Failed to convert transfer function to state-space: {e}")
 
-    def get_output(self, u):
-        """
-        Get current output without stepping the state.
-
-        Computes output from current state: y = C*x + D*u
-
-        Parameters
-        ----------
-        u : float
-            Current input signal
-
-        Returns
-        -------
-        y : float
-            Current output signal
-        """
-        # Compute output: y = C*x + D*u
-        y = self.C @ self.state
-        if self.D.size > 0 and np.any(self.D != 0):
-            if self.D.ndim > 1:
-                y = y + self.D @ np.array([u])
-            else:
-                y = y + self.D * u
-
-        return y.flatten()[0] if y.size > 0 else 0.0
-
     def step(self, u):
         """
         Step the continuous-time transfer function with input u.
@@ -108,8 +82,15 @@ class ContinuousTF:
         y : float
             Output signal at current time step (after stepping)
         """
-        # Get output before stepping (for the current state)
-        y = self.get_output(u)
+        # Compute output: y = C*x + D*u
+        y = self.C @ self.state
+        if self.D.size > 0 and np.any(self.D != 0):
+            if self.D.ndim > 1:
+                y = y + self.D @ np.array([u])
+            else:
+                y = y + self.D * u
+
+        self.y = y.flatten()[0] if y.size > 0 else 0.0
 
         # Update state using Euler integration
         # x[k+1] = x[k] + dt * (A*x[k] + B*u)
@@ -118,8 +99,7 @@ class ContinuousTF:
         self.state = self.state + self.dt * dx
 
         self.last_input = u
-        self.y = y  # Store last output
-        return y
+        return self.y
 
     def reset(self):
         """Reset the internal state to zero."""
@@ -244,7 +224,6 @@ class DiscreteTF:
 
         # For sampling control
         self.last_sample_time = -np.inf  # Initialize to allow first sample
-        self.last_output = 0.0  # ZOH output between samples
         self.y = 0.0  # Last output value (accessible via tf.y)
 
     def step(self, t, u):
@@ -283,7 +262,7 @@ class DiscreteTF:
                     np.array([[u]]) if np.isscalar(u) else np.array([u]).reshape(-1, 1)
                 )
                 y = y + (self.D @ u_vec).flatten()
-            y = float(y[0]) if y.size > 0 else 0.0
+            self.y = float(y[0]) if y.size > 0 else 0.0
 
             # Update state for next sample: x[k+1] = A*x[k] + B*u[k]
             if self.B.ndim == 1:
@@ -303,19 +282,13 @@ class DiscreteTF:
                 self.state = self.A @ self.state + self.B * u
 
             # Store output and update sample time
-            self.last_output = y
-            self.y = y  # Store last output (accessible via tf.y)
             self.last_sample_time = t
-            return y
-        else:
-            # Between samples - return last output (ZOH)
-            return self.last_output
+        return self.y
 
     def reset(self):
         """Reset the internal state to zero."""
         self.state = np.zeros((self.A.shape[0],))
         self.last_sample_time = -np.inf
-        self.last_output = 0.0
         self.y = 0.0
 
     def is_stable(self, tol: float = 1e-10) -> bool:
@@ -459,10 +432,10 @@ class PID:
     """
     Discrete-time PID controller block.
 
-    Implements a PID controller in the z-domain with the form:
-    C(z) = Kp + Ki*Ts*z/(z-1) + Kd*N*(z-1)/(z + N - 1)
-
-    where N = Ts/Tf is the derivative filter coefficient.
+    Implements a PID controller using direct difference equations:
+    - Proportional: u_p = Kp * e
+    - Integral: u_i[k] = u_i[k-1] + Ki * Ts * e[k]
+    - Derivative: u_d[k] = filtered derivative of error
 
     Parameters
     ----------
@@ -472,9 +445,6 @@ class PID:
         Integral gain
     Kd : float
         Derivative gain
-    Tf : float, optional
-        Derivative filter time constant (seconds). Default: 0.1 * sampling_time
-        Smaller values give less filtering, larger values give more filtering.
     sampling_time : float
         Sampling time Ts in seconds
     """
@@ -485,46 +455,18 @@ class PID:
         Ki: float,
         Kd: float,
         sampling_time: float,
-        Tf: float | None = None,
     ):
         self.Kp = float(Kp)
         self.Ki = float(Ki)
         self.Kd = float(Kd)
         self.sampling_time = float(sampling_time)
-        self.Tf = float(Tf) if Tf is not None else 0.1 * self.sampling_time
 
-        # Convert to discrete transfer function form
-        # C(z) = Kp + Ki*Ts*z/(z-1) + Kd*N*(z-1)/(z + N - 1)
-        # where N = Ts/Tf (derivative filter coefficient)
-
-        Ts = self.sampling_time
-        N = Ts / self.Tf if self.Tf > 0 else 1.0
-
-        # Common denominator: (z-1)*(z+N-1) = z^2 + (N-2)*z + (1-N)
-        # Numerator: Kp*(z-1)*(z+N-1) + Ki*Ts*z*(z+N-1) + Kd*N*(z-1)^2
-
-        # Expand each term:
-        # Kp*(z-1)*(z+N-1) = Kp*(z^2 + (N-2)*z + (1-N))
-        # Ki*Ts*z*(z+N-1) = Ki*Ts*(z^2 + (N-1)*z)
-        # Kd*N*(z-1)^2 = Kd*N*(z^2 - 2*z + 1)
-
-        # Combine coefficients:
-        num_coeffs = [
-            self.Kp + self.Ki * Ts + self.Kd * N,  # z^2 coefficient
-            self.Kp * (N - 2)
-            + self.Ki * Ts * (N - 1)
-            - 2 * self.Kd * N,  # z coefficient
-            self.Kp * (1 - N) + self.Kd * N,  # constant coefficient
-        ]
-
-        # Denominator: (z-1)*(z+N-1) = z^2 + (N-2)*z + (1-N)
-        den_coeffs = [1.0, N - 2, 1 - N]
-
-        # Create as DiscreteTF internally
-        self._discrete_tf = DiscreteTF(
-            num=num_coeffs, den=den_coeffs, sampling_time=sampling_time
-        )
-
+        # Internal state
+        self.integral = 0.0  # Integral term accumulator
+        self.last_error = 0.0  # Previous error for derivative
+        
+        # For sampling control
+        self.last_sample_time = -np.inf
         self.y = 0.0  # Last output value
 
     def step(self, t: float, u: float) -> float:
@@ -543,13 +485,37 @@ class PID:
         y : float
             Output signal (control action)
         """
-        y = self._discrete_tf.step(t, u)
-        self.y = y
-        return y
+        # Check if it's time to sample
+        if t - self.last_sample_time >= self.sampling_time:
+            # Time to sample - update PID controller
+            
+            # Proportional term
+            u_p = self.Kp * u
+            
+            # Integral term: u_i[k] = u_i[k-1] + Ki * Ts * e[k]
+            self.integral += self.Ki * self.sampling_time * u
+            u_i = self.integral
+            
+            # Derivative
+            error_diff = u - self.last_error
+            u_d = 0.0
+            # Skip first sample
+            if (self.last_sample_time != -np.inf):
+                u_d = self.Kd * (error_diff / self.sampling_time)
+            
+            # Total output: u = Kp*e + Ki*integral + Kd*derivative
+            self.y = u_p + u_i + u_d
+            
+            # Update state
+            self.last_error = u
+            self.last_sample_time = t
+        return self.y
 
     def reset(self):
         """Reset the internal state to zero."""
-        self._discrete_tf.reset()
+        self.integral = 0.0
+        self.last_error = 0.0
+        self.last_sample_time = -np.inf
         self.y = 0.0
 
     @classmethod
@@ -567,8 +533,6 @@ class PID:
             If length 4: [Kp, Ki, Kd, Tf]
         sampling_time : float
             Sampling time in seconds
-        Tf : float, optional
-            Derivative filter time constant (overrides params[3] if provided)
 
         Returns
         -------
@@ -584,8 +548,4 @@ class PID:
         Ki = params[1]
         Kd = params[2]
 
-        # Tf can come from params or be provided separately
-        if len(params) >= 4 and Tf is None:
-            Tf = params[3]
-
-        return cls(Kp=Kp, Ki=Ki, Kd=Kd, sampling_time=sampling_time, Tf=Tf)
+        return cls(Kp=Kp, Ki=Ki, Kd=Kd, sampling_time=sampling_time)

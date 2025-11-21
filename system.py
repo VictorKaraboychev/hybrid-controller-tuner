@@ -88,6 +88,15 @@ class System:
             params=params,
             sampling_time=0.01,
         )
+    
+    def reset(self):
+        """Reset all blocks to their initial state."""
+        self.p1.reset()
+        self.p2.reset()
+        self.d2.reset()
+        self.s1.reset()
+        self.s2.reset()
+        self.pid_controller.reset()
 
     def step(self, r: float, t: float):
         """
@@ -146,8 +155,8 @@ specs = PerformanceSpecs(
 # Cost function weights (optional - uses defaults if None)
 cost_weights = CostWeights(
     overshoot_weight=1.0,
-    settling_time_weight=4.0,
-    steady_state_error_weight=5.0,
+    settling_time_weight=1.0,
+    steady_state_error_weight=100.0,
     control_signal_limit_weight=2.0,
 )
 
@@ -160,13 +169,13 @@ system_params = SystemParameters(
 
 # Optimization parameters (optional - uses defaults if None)
 optimization_params = OptimizationParameters(
-    population=100,  # Population size for differential evolution
+    population=10,  # Population size for differential evolution
     max_iterations=1000,  # Maximum iterations for optimization
-    de_tol=0.01,  # Convergence tolerance (0.0 to disable early stopping)
+    de_tol=0.0,  # Convergence tolerance (0.0 to disable early stopping)
     bounds=[
-        (-2.0, 2.0),  # Kp bounds
-        (-0.001, 0.001),  # Ki bounds (much smaller for stability)
-        (-0.2, 0.2),  # Kd bounds (much smaller for stability)
+        (-10.0, 10.0),  # Kp bounds
+        (-1.0, 1.0),  # Ki bounds (much smaller for stability)
+        (-10.0, 10.0),  # Kd bounds (much smaller for stability)
     ],
     random_state=None,  # Random seed for reproducibility (None for random)
     verbose=True,  # Print optimization progress
