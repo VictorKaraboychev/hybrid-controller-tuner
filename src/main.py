@@ -114,10 +114,17 @@ def main():
     output_json_path = getattr(system_module, "output_json", "output/controller.json")
     save_path = Path(getattr(system_module, "save_path", "output/response.png"))
 
-    # Get num_parameters from system_params
-    bounds = [
-        (-optimization_params.bound_mag, optimization_params.bound_mag)
-    ] * system_params.num_parameters
+    # Get bounds from optimization_params
+    bounds = optimization_params.bounds
+    if bounds is None:
+        # Default: uniform bounds for all parameters
+        bounds = [(-2.0, 2.0)] * system_params.num_parameters
+
+    if len(bounds) != system_params.num_parameters:
+        raise ValueError(
+            f"bounds must have {system_params.num_parameters} entries, "
+            f"got {len(bounds)}"
+        )
 
     params, metrics = tune_discrete_controller(
         system_file=system_file,

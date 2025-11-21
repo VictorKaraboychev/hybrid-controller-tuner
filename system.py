@@ -7,7 +7,7 @@ then provides a step method to run the system simulation.
 """
 
 import numpy as np
-from src.system_blocks import ContinuousTF, DiscreteTF, Saturation
+from src.system_blocks import ContinuousTF, DiscreteTF, Saturation, PID
 from src.tune_discrete_controller import (
     PerformanceSpecs,
     CostWeights,
@@ -77,11 +77,16 @@ class System:
 
         # Create the optimized controller block using from_params
         # For 4 parameters: num_order=1, den_order=2 gives (1+1) + 2 = 4 parameters
-        self.d_controller = DiscreteTF.from_params(
+        # self.d_controller = DiscreteTF.from_params(
+        #     params=params,
+        #     num_order=1,
+        #     den_order=2,
+        #     sampling_time=0.5,
+        # )
+
+        self.pid_controller = PID.from_params(
             params=params,
-            num_order=1,
-            den_order=2,
-            sampling_time=0.5,
+            sampling_time=0.01,
         )
 
     def step(self, r: float, t: float):
@@ -108,7 +113,7 @@ class System:
         e1 = r - self.p1.y
 
         # Outer Controller
-        u1 = self.d_controller.step(t, e1)
+        u1 = self.pid_controller.step(t, e1)
         # u1 = self.s1.step(u1)
 
         # # Inner Error
@@ -147,7 +152,7 @@ cost_weights = CostWeights(
 )
 
 system_params = SystemParameters(
-    num_parameters=4,  # Total number of optimization parameters
+    num_parameters=3,  # Total number of optimization parameters
     t_end=15.0,  # Simulation end time (seconds)
     step_amplitude=0.15,  # Step input amplitude
     dt=SIMULATION_DT,  # Time step for continuous plant simulation (seconds)
@@ -155,10 +160,14 @@ system_params = SystemParameters(
 
 # Optimization parameters (optional - uses defaults if None)
 optimization_params = OptimizationParameters(
-    population=50,  # Population size for differential evolution
-    max_iterations=4000,  # Maximum iterations for optimization
+    population=100,  # Population size for differential evolution
+    max_iterations=1000,  # Maximum iterations for optimization
     de_tol=0.01,  # Convergence tolerance (0.0 to disable early stopping)
-    bound_mag=2.0,  # Magnitude of parameter bounds (symmetric: [-bound_mag, bound_mag])
+    bounds=[
+        (-2.0, 2.0),  # Kp bounds
+        (-0.001, 0.001),  # Ki bounds (much smaller for stability)
+        (-0.2, 0.2),  # Kd bounds (much smaller for stability)
+    ],
     random_state=None,  # Random seed for reproducibility (None for random)
     verbose=True,  # Print optimization progress
     workers=-1,  # Use all available CPUs for parallel evaluation

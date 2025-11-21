@@ -89,13 +89,6 @@ def simulate_system(
     system_module = load_system_module(system_file)
     SystemClass = system_module.System
 
-    # Get system_params for simulation parameters
-    if hasattr(system_module, "system_params"):
-        system_params = system_module.system_params
-        # Use system_params for any additional parameters the System class needs
-        # The System class will handle interpreting params however it wants
-        pass
-
     # Create System instance with params
     # The System class determines how to interpret the params
     system = SystemClass(params=params)
@@ -122,10 +115,6 @@ def simulate_system(
         e[i] = e_i
         u[i] = u_i
         y[i] = y_i
-
-        # Check for instability
-        if i > 10 and (np.abs(y_i) > 1e8 or np.abs(u_i) > 1e8):
-            raise ValueError("System appears unstable - response growing unbounded")
 
     # Create discrete arrays for compatibility (sample at a reasonable rate)
     # Use dt as the sampling rate for output

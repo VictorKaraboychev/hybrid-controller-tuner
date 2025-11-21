@@ -108,8 +108,9 @@ class OptimizationParameters:
         Convergence tolerance (0.0 to disable early stopping). Default: 0.001
     de_atol : float, optional
         Absolute convergence tolerance. Default: 1e-8
-    bound_mag : float, optional
-        Magnitude of parameter bounds (symmetric: [-bound_mag, bound_mag]). Default: 2.0
+    bounds : Sequence[Tuple[float, float]] | None, optional
+        Parameter bounds for optimization [(min, max), ...] for each parameter.
+        If None, uses default bounds of [-2.0, 2.0] for all parameters. Default: None
     random_state : int | None, optional
         Random seed for reproducibility (None for random). Default: None
     verbose : bool, optional
@@ -138,7 +139,7 @@ class OptimizationParameters:
     max_iterations: int = 60
     de_tol: float = 0.001
     de_atol: float = 1e-8
-    bound_mag: float = 2.0
+    bounds: Sequence[Tuple[float, float]] | None = None
     random_state: int | None = None
     verbose: bool = True
     workers: int = -1
@@ -183,8 +184,9 @@ class _ObjectiveFunction:
                 dt=self.dt,
             )
             metrics = compute_step_metrics(t, y)
-        except Exception:
-            # Penalize unstable or failed simulations
+        except (ValueError, Exception) as e:
+            # If simulation fails (e.g., unbounded growth), return high penalty
+            # Unstable systems will be naturally penalized by poor metrics
             return 1e6
 
         overshoot_penalty = max(
@@ -320,6 +322,15 @@ def tune_discrete_controller(
             f"Expected {num_parameters} bounds, got {len(bounds)}"
         )
 
+    # Validate bounds format
+    for i, bound in enumerate(bounds):
+        if not isinstance(bound, (tuple, list)) or len(bound) != 2:
+            raise ValueError(
+                f"Bound {i} must be a tuple/list of (min, max), got {bound}"
+            )
+        if bound[0] >= bound[1]:
+            raise ValueError(f"Bound {i}: min ({bound[0]}) must be < max ({bound[1]})")
+
     objective = _ObjectiveFunction(
         system_file=system_file,
         specs=specs,
@@ -330,20 +341,36 @@ def tune_discrete_controller(
         dt=dt,
     )
 
-    # Generate initial population
+    # Generate initial population with smaller I and D gains if using PID (3 parameters)
+    # For PID: params = [Kp, Ki, Kd]
+    if num_parameters == 3:
+        # Initialize with smaller Ki and Kd for better stability
+        init_pop = []
+        for _ in range(popsize):
+            individual = []
+            # Kp: use full bounds
+            individual.append(np.random.uniform(bounds[0][0], bounds[0][1]))
+            # Ki: use smaller range (typically 0.1x the bound range, centered around 0)
+            ki_range = min(abs(bounds[1][0]), abs(bounds[1][1])) * 0.1
+            individual.append(np.random.uniform(-ki_range, ki_range))
+            # Kd: use smaller range (typically 0.1x the bound range, centered around 0)
+            kd_range = min(abs(bounds[2][0]), abs(bounds[2][1])) * 0.1
+            individual.append(np.random.uniform(-kd_range, kd_range))
+            init_pop.append(np.array(individual))
+        init_pop = np.array(init_pop)
+    else:
+        # For other parameter counts, use uniform random initialization
+        init_pop = np.array(
+            [
+                np.array([np.random.uniform(low, high) for low, high in bounds])
+                for _ in range(popsize)
+            ]
+        )
+
     if verbose:
         print(f"Generating initial population of {popsize} individuals...")
-
-    # Simple random initialization within bounds
-    init_pop = np.array(
-        [
-            np.array([np.random.uniform(low, high) for low, high in bounds])
-            for _ in range(popsize)
-        ]
-    )
-
-    if verbose:
-        print("Initial population generated successfully.")
+        if num_parameters == 3:
+            print("  Using smaller initial ranges for I and D gains (PID controller)")
 
     result = differential_evolution(
         objective,
@@ -351,7 +378,7 @@ def tune_discrete_controller(
         popsize=popsize,
         maxiter=maxiter,
         seed=random_state,
-        init=init_pop,  # Use our stable initial population
+        init=init_pop,
         polish=False,
         updating="deferred",
         disp=verbose,
@@ -367,14 +394,27 @@ def tune_discrete_controller(
     best_params = result.x
 
     # Re-evaluate to get metrics for the best solution
-    t, y, u, _ = simulate_system(
-        params=best_params,
-        system_file=system_file,
-        t_end=t_end,
-        step_amplitude=step_amplitude,
-        dt=dt,
-    )
-    metrics = compute_step_metrics(t, y)
+    try:
+        t, y, u, _ = simulate_system(
+            params=best_params,
+            system_file=system_file,
+            t_end=t_end,
+            step_amplitude=step_amplitude,
+            dt=dt,
+        )
+        metrics = compute_step_metrics(t, y)
+    except (ValueError, Exception) as e:
+        # If the best solution is unstable, warn and return empty metrics
+        if verbose:
+            print(f"Warning: Best solution found by optimizer is unstable: {e}")
+            print("  This may indicate the optimization bounds are too wide or")
+            print("  the system is difficult to stabilize with the given parameters.")
+        metrics = {
+            "percent_overshoot": float("inf"),
+            "settling_time_2pct": float("inf"),
+            "steady_state": float("nan"),
+            "rise_time": float("inf"),
+        }
 
     if verbose:
         print("Tuning complete:")
@@ -382,6 +422,9 @@ def tune_discrete_controller(
         print(f"  Best parameters: {best_params}")
         print("  Metrics:")
         for key, value in metrics.items():
-            print(f"    {key}: {value:.4f}")
+            if np.isfinite(value):
+                print(f"    {key}: {value:.4f}")
+            else:
+                print(f"    {key}: {value}")
 
     return best_params, metrics
