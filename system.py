@@ -94,9 +94,7 @@ def system(d_controller, r, t):
     # Outer Controller
     u1 = d_controller.step(t, e1)
     # u1 = s1.step(u1)
-    
-    u1 += p1.y;
-    
+        
     # # Inner Error
     # e2 = u1 - p2.y
     
@@ -141,15 +139,15 @@ specs = PerformanceSpecs(
 cost_weights = CostWeights(
     overshoot_weight=1.0,
     settling_time_weight=4.0,
-    steady_state_error_weight=3.0,
+    steady_state_error_weight=5.0,
     control_signal_limit_weight=2.0,
 )
 
 # System parameters (required)
 system_params = SystemParameters(
     sampling_time=0.5,          # Sampling time for discrete controller (seconds)
-    num_order=3,                # Numerator order (degree) - must be < den_order
-    den_order=4,                # Denominator order (degree) - must be > num_order
+    num_order=2,                # Numerator order (degree)
+    den_order=2,                # Denominator order (degree)
     t_end=15.0,                 # Simulation end time (seconds)
     step_amplitude=0.15,        # Step input amplitude
     dt=SIMULATION_DT,           # Time step for continuous plant simulation (seconds)
@@ -159,7 +157,7 @@ system_params = SystemParameters(
 optimization_params = OptimizationParameters(
     population=100,             # Population size for differential evolution
     max_iterations=4000,       # Maximum iterations for optimization
-    de_tol=0.1,                 # Convergence tolerance (0.0 to disable early stopping)
+    de_tol=0.01,                 # Convergence tolerance (0.0 to disable early stopping)
     bound_mag=2.0,              # Magnitude of parameter bounds (symmetric: [-bound_mag, bound_mag])
     random_state=None,          # Random seed for reproducibility (None for random)
     verbose=True,               # Print optimization progress

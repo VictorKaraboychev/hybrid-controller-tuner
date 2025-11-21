@@ -103,8 +103,8 @@ cost_weights = CostWeights(
 # System parameters (required)
 system_params = SystemParameters(
     sampling_time=0.015,        # Sampling time for discrete controller (seconds)
-    num_order=1,                # Numerator order (degree) - must be < den_order
-    den_order=3,                # Denominator order (degree) - must be > num_order
+    num_order=1,                # Numerator order (degree)
+    den_order=3,                # Denominator order (degree)
     t_end=0.5,                  # Simulation end time (seconds, default: 5.0)
     step_amplitude=1.4,         # Step input amplitude (default: 1.0)
     dt=0.001,                    # Time step for continuous plant simulation (default: 0.001)
@@ -299,8 +299,8 @@ All tuning parameters and specifications are defined in `system.py`. Required pa
 
 - **`system_params`**: `SystemParameters` object with:
   - `sampling_time`: Sampling time for discrete controller (seconds)
-  - `num_order`: Numerator order (degree) - must be < den_order
-  - `den_order`: Denominator order (degree) - must be > num_order
+  - `num_order`: Numerator order (degree)
+  - `den_order`: Denominator order (degree)
   - `t_end`: Simulation end time (default: 5.0)
   - `step_amplitude`: Step input amplitude (default: 1.0)
   - `dt`: Time step for continuous plant simulation (default: 0.001)

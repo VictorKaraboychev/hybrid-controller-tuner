@@ -78,9 +78,9 @@ class SystemParameters:
     sampling_time : float
         Sampling time for discrete controller (seconds)
     num_order : int
-        Numerator order (degree) - must be < den_order
+        Numerator order (degree)
     den_order : int
-        Denominator order (degree) - must be > num_order
+        Denominator order (degree)
     t_end : float, optional
         Simulation end time (seconds). Default: 5.0
     step_amplitude : float, optional
@@ -156,27 +156,17 @@ def params_to_discrete_tf(
     params: np.ndarray, num_order: int, den_order: int
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Map optimization parameters to a strictly proper discrete-time transfer function.
-
-    A strictly proper transfer function has degree(numerator) < degree(denominator).
-    This ensures the controller is causal and implementable.
-    
-    Integral action is always enforced by ensuring the controller has a pole at z=1.
-    This eliminates steady-state error from constant disturbances. The last denominator
-    coefficient is computed as: a_n = -1 - sum(a_1 to a_{n-1}).
+    Map optimization parameters to a discrete-time transfer function.
 
     Parameters:
     -----------
     params : np.ndarray
         Optimization parameters: [num_coeffs..., den_coeffs...]
-        The last denominator coefficient is computed to enforce a pole at z=1,
-        so one fewer parameter is needed.
     num_order : int
         Numerator order (degree). Resulting numerator has num_order + 1 coefficients.
     den_order : int
         Denominator order (degree). Resulting denominator has den_order + 1 coefficients.
-        The leading denominator coefficient is fixed at 1.0, and the last is computed
-        to enforce integral action.
+        The leading denominator coefficient is fixed at 1.0.
 
     Returns:
     --------
@@ -188,25 +178,17 @@ def params_to_discrete_tf(
     Raises:
     -------
     ValueError
-        If num_order >= den_order (not strictly proper)
-        If den_order < 1 (need at least one denominator coefficient for integral action)
+        If den_order < 0
         If incorrect number of parameters provided
     """
-    # Enforce strict properness: degree(num) < degree(den)
-    if num_order >= den_order:
+    if den_order < 0:
         raise ValueError(
-            f"Controller must be strictly proper: num_order ({num_order}) must be < den_order ({den_order}). "
-            f"Current: degree(num) = {num_order}, degree(den) = {den_order}"
-        )
-
-    if den_order < 1:
-        raise ValueError(
-            f"Integral action requires den_order >= 1, got {den_order}"
+            f"den_order must be >= 0, got {den_order}"
         )
 
     num_coeffs = num_order + 1
-    # Last denominator coefficient is computed for integral action, so one fewer parameter
-    expected_params = num_coeffs + den_order - 1
+    # All denominator coefficients except the leading one (fixed at 1.0) come from parameters
+    expected_params = num_coeffs + den_order
 
     if len(params) != expected_params:
         raise ValueError(
@@ -215,12 +197,10 @@ def params_to_discrete_tf(
 
     num = np.asarray(params[:num_coeffs], dtype=float)
     
-    # Get all but the last denominator coefficient from parameters
+    # Get all denominator coefficients except the leading one from parameters
     den_rest = np.asarray(params[num_coeffs:], dtype=float)
-    # Enforce pole at z=1: D(1) = 1 + a1 + a2 + ... + an = 0
-    # So: an = -1 - (a1 + a2 + ... + a_{n-1})
-    last_coeff = -1.0 - np.sum(den_rest)
-    den = np.concatenate(([1.0], den_rest, [last_coeff]))
+    # Leading coefficient is fixed at 1.0
+    den = np.concatenate(([1.0], den_rest))
 
     return num, den
 
@@ -234,8 +214,7 @@ def _generate_stable_initial_individual(
     """
     Generate a single initial individual with poles strictly inside the open unit disk.
     
-    The integrator pole at z=1 is allowed (enforced by params_to_discrete_tf).
-    All other poles must be strictly inside the unit circle (|z| < 1).
+    All poles must be strictly inside the unit circle (|z| < 1).
     
     Parameters
     ----------
@@ -259,10 +238,7 @@ def _generate_stable_initial_individual(
         If unable to generate a valid individual after max_attempts
     """
     for attempt in range(max_attempts):
-        # Generate random parameters within bounds
-        params = np.array([
-            np.random.uniform(low, high) for low, high in bounds
-        ])
+        params = np.array([np.random.uniform(low, high) for low, high in bounds])
         
         try:
             # Convert to transfer function
@@ -271,26 +247,8 @@ def _generate_stable_initial_individual(
             # Find roots of denominator (controller poles)
             controller_poles = np.roots(den)
             
-            # Check pole stability
-            # Allow pole at z=1 (integrator) with tolerance
-            # All other poles must be strictly inside unit disk (|z| < 1)
-            integrator_tolerance = 1e-6
-            valid = True
-            
-            for pole in controller_poles:
-                pole_magnitude = np.abs(pole)
-                # Check if this is the integrator pole (z=1)
-                is_integrator = abs(pole_magnitude - 1.0) < integrator_tolerance
-                
-                if is_integrator:
-                    # Integrator pole is allowed
-                    continue
-                elif pole_magnitude >= 1.0 - 1e-10:
-                    # Pole on or outside unit circle (not allowed)
-                    valid = False
-                    break
-            
-            if valid:
+            # Check pole stability - all poles must be strictly inside unit disk (|z| < 1)
+            if np.all(np.abs(controller_poles) < 1.0 - 1e-10):
                 return params
                 
         except Exception:
@@ -304,49 +262,8 @@ def _generate_stable_initial_individual(
     )
 
 
-def _make_stable_initial_population(
-    bounds: Sequence[Tuple[float, float]],
-    popsize: int,
-    num_order: int,
-    den_order: int,
-) -> np.ndarray:
-    """
-    Generate an initial population where all individuals have poles strictly inside the open unit disk.
-    
-    Parameters
-    ----------
-    bounds : Sequence[Tuple[float, float]]
-        Parameter bounds for each parameter
-    popsize : int
-        Population size
-    num_order : int
-        Numerator order
-    den_order : int
-        Denominator order
-        
-    Returns
-    -------
-    np.ndarray
-        Initial population matrix of shape (popsize, n_params)
-    """
-    population = []
-    for i in range(popsize):
-        individual = _generate_stable_initial_individual(
-            bounds, num_order, den_order
-        )
-        population.append(individual)
-    
-    return np.array(population)
 
 
-def _make_default_bounds(
-    total_params: int, magnitude: float = 2.0
-) -> Sequence[Tuple[float, float]]:
-    """
-    Helper to construct symmetric parameter bounds.
-    """
-
-    return [(-magnitude, magnitude)] * total_params
 
 
 class _ObjectiveFunction:
@@ -382,22 +299,17 @@ class _ObjectiveFunction:
         try:
             controller_tf = params_to_discrete_tf(param_vec, self.num_order, self.den_order)
             
-            # Check controller stability by examining its poles
+            # Check controller stability
             _, den = controller_tf
-            # Find roots of denominator (controller poles)
             controller_poles = np.roots(den)
-            # Check if any pole is outside the unit circle (unstable)
             if np.any(np.abs(controller_poles) > 1.0 + 1e-10):
-                # Penalize unstable controllers
                 return 1e6
             
-            # Check if the computed last coefficient (for integral action) is reasonable
-            # Large coefficients can lead to numerical issues
+            # Penalize very large coefficients (numerical issues)
             if len(den) > 1:
-                last_coeff = den[-1]
-                # Penalize if the computed coefficient is very large (likely problematic)
-                if abs(last_coeff) > 50.0:
-                    return 1e6 + abs(last_coeff) * 100
+                max_coeff = np.max(np.abs(den))
+                if max_coeff > 50.0:
+                    return 1e6 + max_coeff * 100
             
             t, y, u, _ = simulate_system(
                 controller_tf=controller_tf,
@@ -412,104 +324,33 @@ class _ObjectiveFunction:
             # Penalize unstable or failed simulations
             return 1e6
 
-        overshoot_penalty = max(
-            0.0, metrics["percent_overshoot"] - self.specs.max_overshoot_pct
-        )
+        overshoot_penalty = max(0.0, metrics["percent_overshoot"] - self.specs.max_overshoot_pct)
 
-        # Stronger penalty for settling time violations
-        settling_penalty = 0.0
+        # Penalty for settling time violations
         if not np.isfinite(metrics["settling_time_2pct"]):
-            # If doesn't settle, use a large penalty based on simulation time
-            # This encourages the optimizer to find solutions that actually settle
             settling_penalty = self.t_end + 10.0 * self.specs.settling_time_2pct
         else:
-            # Use squared penalty to make violations more expensive
-            violation = max(
-                0.0, metrics["settling_time_2pct"] - self.specs.settling_time_2pct
-            )
-            settling_penalty = violation**2
+            settling_penalty = max(0.0, metrics["settling_time_2pct"] - self.specs.settling_time_2pct) ** 2
 
-        # Encourage steady-state accuracy
-        steady_state_error = abs(metrics["steady_state"] - self.step_amplitude)
-        steady_state_error_penalty = steady_state_error**2
+        steady_state_error_penalty = abs(metrics["steady_state"] - self.step_amplitude) ** 2
 
-        # Control signal limit penalty (only penalize if limit is exceeded)
-        control_signal_penalty = 0.0
+        # Control signal limit penalty
         if self.specs.max_control_signal is not None:
-            max_control_magnitude = np.max(np.abs(u))
-            
-            violation = max(0.0, max_control_magnitude - self.specs.max_control_signal)
-            control_signal_penalty = violation**2  # Squared penalty for violations
+            control_signal_penalty = max(0.0, np.max(np.abs(u)) - self.specs.max_control_signal) ** 2
+        else:
+            control_signal_penalty = 0.0
 
-        # Weighted sum cost
+        # Weighted cost: constraints heavily weighted, objectives for fine-tuning
         constraints = (
             self.cost_weights.overshoot_weight * overshoot_penalty
             + self.cost_weights.settling_time_weight * settling_penalty
             + self.cost_weights.steady_state_error_weight * steady_state_error_penalty
             + self.cost_weights.control_signal_limit_weight * control_signal_penalty
         )
+        objectives = self.cost_weights.settling_time_weight * metrics["settling_time_2pct"]
         
-        objectives = (
-            self.cost_weights.settling_time_weight * metrics["settling_time_2pct"]
-        )
-        
-        # Solve the constraints before the objectives become important
-        cost = 100.0 * constraints + objectives
+        return 100.0 * constraints + objectives
 
-        return cost
-
-
-def _make_objective_function(
-    system_file: str,
-    sampling_time: float,
-    specs: PerformanceSpecs,
-    num_order: int,
-    den_order: int,
-    t_end: float,
-    step_amplitude: float,
-    cost_weights: CostWeights | None = None,
-    dt: float = 0.001,
-) -> _ObjectiveFunction:
-    """
-    Create an objective function for controller optimization.
-
-    Parameters
-    ----------
-    system_file : str
-        Path to the system.py file defining the plant
-    sampling_time : float
-        Sampling time in seconds
-    specs : PerformanceSpecs
-        Performance requirements
-    num_order : int
-        Numerator order
-    den_order : int
-        Denominator order
-    t_end : float
-        Simulation end time
-    step_amplitude : float
-        Step input amplitude
-    cost_weights : CostWeights, optional
-        Weights for cost function components. If None, uses default weights.
-    dt : float, optional
-        Time step for continuous plant simulation (default: 0.001)
-
-    Returns
-    -------
-    _ObjectiveFunction
-        Objective function object that can be pickled for multiprocessing
-    """
-    return _ObjectiveFunction(
-        system_file=system_file,
-        sampling_time=sampling_time,
-        specs=specs,
-        num_order=num_order,
-        den_order=den_order,
-        t_end=t_end,
-        step_amplitude=step_amplitude,
-        cost_weights=cost_weights,
-        dt=dt,
-    )
 
 def tune_discrete_controller(
     system_file: str = "system.py",
@@ -536,9 +377,6 @@ def tune_discrete_controller(
     """
     Search for discrete controller coefficients meeting the provided specs.
 
-    The controller is constrained to be strictly proper: degree(numerator) < degree(denominator).
-    This ensures the controller is causal and physically realizable.
-
     Parameters:
     -----------
     system_file : str, optional
@@ -552,7 +390,7 @@ def tune_discrete_controller(
         Default: 2 (2nd order numerator = 3 coefficients)
     den_order : int, optional
         Denominator order (degree). The denominator will have den_order + 1 coefficients
-        (leading coefficient fixed at 1.0). Must be > num_order for strict properness.
+        (leading coefficient fixed at 1.0).
         Default: 2 (2nd order denominator = 3 coefficients)
     t_end : float, optional
         Simulation end time in seconds (default: 5.0)
@@ -603,29 +441,15 @@ def tune_discrete_controller(
         Best denominator coefficients found
     metrics : dict
         Performance metrics of the best controller
-
-    Raises:
-    ------
-    ValueError
-        If num_order >= den_order (controller would not be strictly proper)
     """
     # Validate required parameters
     if specs is None:
         raise ValueError("specs parameter is required")
-    
-    # Validate strict properness requirement
-    if num_order >= den_order:
-        raise ValueError(
-            f"Controller must be strictly proper: num_order ({num_order}) must be < den_order ({den_order}). "
-            f"This ensures degree(numerator) < degree(denominator)."
-        )
 
-    num_params = num_order + 1
-    # Last denominator coefficient is computed for integral action, so one fewer parameter
-    total_params = num_params + den_order - 1
+    total_params = (num_order + 1) + den_order
     
     if bounds is None:
-        bounds = _make_default_bounds(total_params)
+        bounds = [(-2.0, 2.0)] * total_params
 
     if len(bounds) != total_params:
         raise ValueError(
@@ -633,7 +457,7 @@ def tune_discrete_controller(
             f"Expected {total_params} bounds, got {len(bounds)}"
         )
 
-    objective = _make_objective_function(
+    objective = _ObjectiveFunction(
         system_file=system_file,
         sampling_time=sampling_time,
         specs=specs,
@@ -649,12 +473,10 @@ def tune_discrete_controller(
     if verbose:
         print(f"Generating initial population of {popsize} controllers with stable poles...")
     
-    init_pop = _make_stable_initial_population(
-        bounds=bounds,
-        popsize=popsize,
-        num_order=num_order,
-        den_order=den_order,
-    )
+    init_pop = np.array([
+        _generate_stable_initial_individual(bounds, num_order, den_order)
+        for _ in range(popsize)
+    ])
     
     if verbose:
         print("Initial population generated successfully.")
@@ -680,24 +502,14 @@ def tune_discrete_controller(
     # Use result.x (best parameters found by optimizer) and verify it's stable
     best_params = result.x
     
-    # Verify the best solution is stable by checking poles
-    try:
-        controller_tf = params_to_discrete_tf(best_params, num_order, den_order)
-        _, den = controller_tf
-        controller_poles = np.roots(den)
-        
-        # Check if any pole is outside the unit circle (unstable)
-        if np.any(np.abs(controller_poles) > 1.0 + 1e-10):
-            raise RuntimeError(
-                "Optimizer found an unstable solution. This may indicate the optimization "
-                "converged to an unstable region. Consider adjusting bounds or specs."
-            )
-    except Exception as e:
-        if isinstance(e, RuntimeError):
-            raise
+    # Verify the best solution is stable
+    controller_tf = params_to_discrete_tf(best_params, num_order, den_order)
+    _, den = controller_tf
+    controller_poles = np.roots(den)
+    
+    if np.any(np.abs(controller_poles) > 1.0 + 1e-10):
         raise RuntimeError(
-            f"Failed to find a stable controller. Error: {e}. "
-            "Consider widening bounds, relaxing specs, or adjusting controller order."
+            "Optimizer found an unstable solution. Consider adjusting bounds or specs."
         )
     
     # Re-evaluate to get metrics for the best solution

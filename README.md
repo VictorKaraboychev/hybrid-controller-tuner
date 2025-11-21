@@ -178,7 +178,6 @@ The generated plot shows four subplots:
 
 - **System Builder**: Use the system builder approach (see [SYSTEM_BUILDER_README.md](SYSTEM_BUILDER_README.md)) - it's more flexible and powerful than JSON configuration
 - **Accessing Outputs**: Use the `.y` attribute on transfer functions to access last output values (e.g., `plant.y`, `p1.y`)
-- **Strict Properness**: Ensure `num_order < den_order` for a causal, implementable controller
 - **Sampling Time**: Choose an appropriate sampling time (typically 10-20x faster than the plant's dominant time constant)
 - **Optimization**: Increase `population` and `max_iterations` for better results, but at the cost of longer computation time
 - **Optimization Parameters**: For stable controllers, try `mutation=(0.5, 1.0)`, `recombination=0.6`, and `strategy='best2bin'`

@@ -108,22 +108,8 @@ def main():
     output_json_path = getattr(system_module, "output_json", "output/controller.json")
     save_path = Path(getattr(system_module, "save_path", "output/response.png"))
 
-    # Validate strict properness requirement
-    if system_params.num_order >= system_params.den_order:
-        import sys
-
-        print(
-            f"ERROR: Controller must be strictly proper: num_order ({system_params.num_order}) must be < den_order ({system_params.den_order}).",
-            file=sys.stderr,
-        )
-        print(
-            "This ensures degree(numerator) < degree(denominator) for a causal, implementable controller.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # Last denominator coefficient is computed for integral action, so one fewer parameter
-    total_params = (system_params.num_order + 1) + system_params.den_order - 1
+    # All denominator coefficients except the leading one (fixed at 1.0) come from parameters
+    total_params = (system_params.num_order + 1) + system_params.den_order
     bounds = [(-optimization_params.bound_mag, optimization_params.bound_mag)] * total_params
 
     num, den, metrics = tune_discrete_controller(

@@ -167,10 +167,8 @@ class DiscreteTF:
         # When degrees match: dividing by z gives same coefficient order
         # Example: (z + 0.5)/(z - 0.5) = (1 + 0.5*z^-1)/(1 - 0.5*z^-1)
         # So [1, 0.5] in descending z is [1, 0.5] in ascending z^-1 (same order!)
-        # For strictly proper systems, scipy handles them correctly without padding
         
         # Pass coefficients directly to scipy (no padding needed)
-        # Scipy will handle strictly proper systems correctly
         num_scipy = self.num
         den_scipy = self.den
         
