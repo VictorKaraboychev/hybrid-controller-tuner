@@ -146,8 +146,8 @@ cost_weights = CostWeights(
 # System parameters (required)
 system_params = SystemParameters(
     sampling_time=0.5,          # Sampling time for discrete controller (seconds)
-    num_order=2,                # Numerator order (degree)
-    den_order=2,                # Denominator order (degree)
+    num_order=1,                # Numerator order (degree)
+    den_order=1,                # Denominator order (degree)
     t_end=15.0,                 # Simulation end time (seconds)
     step_amplitude=0.15,        # Step input amplitude
     dt=SIMULATION_DT,           # Time step for continuous plant simulation (seconds)

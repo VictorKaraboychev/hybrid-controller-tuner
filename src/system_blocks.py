@@ -5,6 +5,7 @@ This module provides reusable blocks for building control systems:
 - ContinuousTF: Continuous-time transfer function (s-domain)
 - DiscreteTF: Discrete-time transfer function (z-domain) with zero-order hold
 - Saturation: Signal saturation/limiting block
+- PID: Discrete-time PID controller
 """
 
 import numpy as np
@@ -125,6 +126,35 @@ class ContinuousTF:
         self.state = np.zeros((self.A.shape[0],))
         self.last_input = 0.0
         self.y = 0.0
+    
+    @classmethod
+    def from_params(cls, params: np.ndarray, num_order: int, den_order: int, dt: float = 0.001):
+        """
+        Create a ContinuousTF block from parameter array.
+        
+        Parameters
+        ----------
+        params : np.ndarray
+            Parameter array: [num_coeffs..., den_coeffs...]
+            First num_order+1 elements are numerator coefficients
+            Next den_order elements are denominator coefficients (leading 1.0 is assumed)
+        num_order : int
+            Numerator order (degree)
+        den_order : int
+            Denominator order (degree)
+        dt : float, optional
+            Integration time step (default: 0.001)
+            
+        Returns
+        -------
+        ContinuousTF
+            ContinuousTF block instance
+        """
+        num_coeffs = num_order + 1
+        num = params[:num_coeffs]
+        den_rest = params[num_coeffs:num_coeffs + den_order]
+        den = np.concatenate(([1.0], den_rest))
+        return cls(num=num, den=den, dt=dt)
 
 
 class DiscreteTF:
@@ -259,6 +289,35 @@ class DiscreteTF:
         self.last_sample_time = -np.inf
         self.last_output = 0.0
         self.y = 0.0
+    
+    @classmethod
+    def from_params(cls, params: np.ndarray, num_order: int, den_order: int, sampling_time: float):
+        """
+        Create a DiscreteTF block from parameter array.
+        
+        Parameters
+        ----------
+        params : np.ndarray
+            Parameter array: [num_coeffs..., den_coeffs...]
+            First num_order+1 elements are numerator coefficients
+            Next den_order elements are denominator coefficients (leading 1.0 is assumed)
+        num_order : int
+            Numerator order (degree)
+        den_order : int
+            Denominator order (degree)
+        sampling_time : float
+            Sampling time in seconds
+            
+        Returns
+        -------
+        DiscreteTF
+            DiscreteTF block instance
+        """
+        num_coeffs = num_order + 1
+        num = params[:num_coeffs]
+        den_rest = params[num_coeffs:num_coeffs + den_order]
+        den = np.concatenate(([1.0], den_rest))
+        return cls(num=num, den=den, sampling_time=sampling_time)
 
 
 class Saturation:
@@ -310,4 +369,157 @@ class Saturation:
     def reset(self):
         """Reset the block (no-op for saturation, but included for consistency)."""
         pass
+    
+    @classmethod
+    def from_params(cls, params: np.ndarray):
+        """
+        Create a Saturation block from parameter array.
+        
+        Parameters
+        ----------
+        params : np.ndarray
+            Parameter array: [min_val, max_val] or [min_val] or [max_val]
+            If length 1: only that limit is set (min if negative, max if positive)
+            If length 2: [min_val, max_val]
+            
+        Returns
+        -------
+        Saturation
+            Saturation block instance
+        """
+        if len(params) == 1:
+            val = params[0]
+            if val < 0:
+                return cls(min_val=val, max_val=None)
+            else:
+                return cls(min_val=None, max_val=val)
+        elif len(params) == 2:
+            return cls(min_val=params[0], max_val=params[1])
+        else:
+            raise ValueError(f"Saturation from_params expects 1 or 2 parameters, got {len(params)}")
+
+
+class PID:
+    """
+    Discrete-time PID controller block.
+    
+    Implements a PID controller in the z-domain with the form:
+    C(z) = Kp + Ki*Ts*z/(z-1) + Kd*N*(z-1)/(z + N - 1)
+    
+    where N = Ts/Tf is the derivative filter coefficient.
+    
+    Parameters
+    ----------
+    Kp : float
+        Proportional gain
+    Ki : float
+        Integral gain
+    Kd : float
+        Derivative gain
+    Tf : float, optional
+        Derivative filter time constant (seconds). Default: 0.1 * sampling_time
+        Smaller values give less filtering, larger values give more filtering.
+    sampling_time : float
+        Sampling time Ts in seconds
+    """
+    
+    def __init__(self, Kp: float, Ki: float, Kd: float, sampling_time: float, Tf: float | None = None):
+        self.Kp = float(Kp)
+        self.Ki = float(Ki)
+        self.Kd = float(Kd)
+        self.sampling_time = float(sampling_time)
+        self.Tf = float(Tf) if Tf is not None else 0.1 * self.sampling_time
+        
+        # Convert to discrete transfer function form
+        # C(z) = Kp + Ki*Ts*z/(z-1) + Kd*N*(z-1)/(z + N - 1)
+        # where N = Ts/Tf (derivative filter coefficient)
+        
+        Ts = self.sampling_time
+        N = Ts / self.Tf if self.Tf > 0 else 1.0
+        
+        # Common denominator: (z-1)*(z+N-1) = z^2 + (N-2)*z + (1-N)
+        # Numerator: Kp*(z-1)*(z+N-1) + Ki*Ts*z*(z+N-1) + Kd*N*(z-1)^2
+        
+        # Expand each term:
+        # Kp*(z-1)*(z+N-1) = Kp*(z^2 + (N-2)*z + (1-N))
+        # Ki*Ts*z*(z+N-1) = Ki*Ts*(z^2 + (N-1)*z)
+        # Kd*N*(z-1)^2 = Kd*N*(z^2 - 2*z + 1)
+        
+        # Combine coefficients:
+        num_coeffs = [
+            self.Kp + self.Ki * Ts + self.Kd * N,  # z^2 coefficient
+            self.Kp * (N - 2) + self.Ki * Ts * (N - 1) - 2 * self.Kd * N,  # z coefficient
+            self.Kp * (1 - N) + self.Kd * N  # constant coefficient
+        ]
+        
+        # Denominator: (z-1)*(z+N-1) = z^2 + (N-2)*z + (1-N)
+        den_coeffs = [1.0, N - 2, 1 - N]
+        
+        # Create as DiscreteTF internally
+        self._discrete_tf = DiscreteTF(
+            num=num_coeffs,
+            den=den_coeffs,
+            sampling_time=sampling_time
+        )
+        
+        self.y = 0.0  # Last output value
+    
+    def step(self, t: float, u: float) -> float:
+        """
+        Step the PID controller with input u.
+        
+        Parameters
+        ----------
+        t : float
+            Current time (seconds)
+        u : float
+            Input signal (error)
+            
+        Returns
+        -------
+        y : float
+            Output signal (control action)
+        """
+        y = self._discrete_tf.step(t, u)
+        self.y = y
+        return y
+    
+    def reset(self):
+        """Reset the internal state to zero."""
+        self._discrete_tf.reset()
+        self.y = 0.0
+    
+    @classmethod
+    def from_params(cls, params: np.ndarray, sampling_time: float, Tf: float | None = None):
+        """
+        Create a PID block from parameter array.
+        
+        Parameters
+        ----------
+        params : np.ndarray
+            Parameter array: [Kp, Ki, Kd] or [Kp, Ki, Kd, Tf]
+            If length 3: [Kp, Ki, Kd]
+            If length 4: [Kp, Ki, Kd, Tf]
+        sampling_time : float
+            Sampling time in seconds
+        Tf : float, optional
+            Derivative filter time constant (overrides params[3] if provided)
+            
+        Returns
+        -------
+        PID
+            PID block instance
+        """
+        if len(params) < 3:
+            raise ValueError(f"PID from_params expects at least 3 parameters [Kp, Ki, Kd], got {len(params)}")
+        
+        Kp = params[0]
+        Ki = params[1]
+        Kd = params[2]
+        
+        # Tf can come from params or be provided separately
+        if len(params) >= 4 and Tf is None:
+            Tf = params[3]
+        
+        return cls(Kp=Kp, Ki=Ki, Kd=Kd, sampling_time=sampling_time, Tf=Tf)
 
