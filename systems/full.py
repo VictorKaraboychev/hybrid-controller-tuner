@@ -59,7 +59,7 @@ class FullSystem(Block):
         return r, y_outer, e_outer, u_outer, y_inner, e_inner, u_inner
       
     def cost(self) -> float:
-        results = simulate_system(self, Step(amplitude=0.15), 10.0, 0.002)
+        results = simulate_system(self, Step(amplitude=0.15), 10.0, dt=0.005)
         
         metrics_outer = compute_metrics(results)
         # For inner system, need to create modified results with u_outer as reference

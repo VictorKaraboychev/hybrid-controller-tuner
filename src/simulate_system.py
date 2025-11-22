@@ -102,10 +102,18 @@ def simulate_system(
         prev_dt = dt
         stable_steps = 0  # Count consecutive stable steps
         
-        # Growth/decay factors for timestep adjustment
-        growth_factor = 1.2  # Increase dt by 20% when signals are slow
-        decay_factor = 0.8   # Decrease dt by 20% when signals are fast
-        stable_threshold = 10  # Number of stable steps before increasing dt
+        # Growth/decay factors for timestep adjustment - be very aggressive
+        growth_factor = 2.5  # Increase dt by 150% when signals are slow (very aggressive)
+        decay_factor = 0.95  # Decrease dt by only 5% when signals are fast (minimal decrease)
+        stable_threshold = 3  # Number of stable steps before increasing dt (very low)
+        
+        # Only check adaptation every N steps to reduce overhead
+        adaptation_check_interval = 3  # Check more frequently but with less overhead
+        step_count = 0
+        
+        # Running average of signal changes for smoother adaptation
+        change_history = []
+        history_size = 5  # Smaller history for faster adaptation
         
         while t_current < t_end:
             # Ensure we don't overshoot t_end
@@ -129,40 +137,63 @@ def simulate_system(
             for j, value in enumerate(result):
                 signals_list[j].append(value)
             
-            # Update timestep based on signal changes (if we have previous values)
-            if prev_signals is not None:
-                # Compute maximum absolute change across all signals
-                max_absolute_change = 0.0
+            # Update timestep based on signal changes (only check periodically)
+            step_count += 1
+            if prev_signals is not None and step_count >= adaptation_check_interval:
+                step_count = 0  # Reset counter
+                
+                # Compute maximum relative change across all signals
+                # Use relative change (normalized by signal magnitude) to handle different scales
+                max_relative_change = 0.0
                 
                 for j in range(num_signals):
                     signal_prev = prev_signals[j]
                     signal_curr = result[j]
+                    
+                    # Compute relative change (fractional change per unit time)
+                    signal_magnitude = max(abs(signal_prev), abs(signal_curr), 1e-10)
                     absolute_change = abs(signal_curr - signal_prev)
-                    max_absolute_change = max(max_absolute_change, absolute_change)
+                    # Normalize by magnitude and time to get rate of change
+                    relative_change = (absolute_change / signal_magnitude) / prev_dt
+                    
+                    max_relative_change = max(max_relative_change, relative_change)
                 
-                # Use absolute change threshold (not normalized) for simplicity
-                # This works better when signals have different scales
-                change_threshold = adaptive_tolerance * current_dt
+                # Store in history for smoother adaptation
+                change_history.append(max_relative_change)
+                if len(change_history) > history_size:
+                    change_history.pop(0)
                 
-                # Adjust timestep based on change
-                # Only increase dt when signals are very stable (after multiple stable steps)
-                # Only decrease dt when signals are changing rapidly
-                if max_absolute_change < change_threshold * 0.1:
-                    # Signals are very stable - count stable steps
-                    stable_steps += 1
-                    if stable_steps >= stable_threshold:
-                        # Been stable for a while - increase dt
-                        new_dt = current_dt * growth_factor
-                        current_dt = min(new_dt, max_dt)
+                # Use average of recent changes for more stable adaptation
+                avg_change = np.mean(change_history) if len(change_history) >= history_size else 0.0
+                
+                # Only adapt if we have enough history (but start adapting sooner)
+                if len(change_history) >= max(3, history_size // 2):
+                    # Very lenient thresholds - be aggressive about increasing dt
+                    # Only decrease dt for truly extreme changes
+                    if avg_change < adaptive_tolerance * 0.5:
+                        # Stable - count stable steps aggressively
+                        stable_steps += adaptation_check_interval * 2  # Count faster
+                        if stable_steps >= stable_threshold:
+                            # Been stable - increase dt aggressively
+                            new_dt = current_dt * growth_factor
+                            current_dt = min(new_dt, max_dt)
+                            stable_steps = 0  # Reset counter
+                    elif avg_change > adaptive_tolerance * 100.0:
+                        # Extremely rapid change - decrease dt minimally
+                        new_dt = current_dt * decay_factor
+                        current_dt = max(new_dt, min_dt)
                         stable_steps = 0  # Reset counter
-                elif max_absolute_change > change_threshold * 10:
-                    # Signals are changing rapidly - decrease dt immediately
-                    new_dt = current_dt * decay_factor
-                    current_dt = max(new_dt, min_dt)
-                    stable_steps = 0  # Reset counter
-                else:
-                    # Moderate change - keep current dt, reset counter
-                    stable_steps = 0  # Reset counter
+                    else:
+                        # Moderate change - be lenient, allow gradual increase
+                        if avg_change < adaptive_tolerance * 2:
+                            # Moderately stable - count towards increase
+                            stable_steps += 1
+                            if stable_steps >= stable_threshold * 2:
+                                # Been moderately stable - increase dt
+                                new_dt = current_dt * 1.5
+                                current_dt = min(new_dt, max_dt)
+                                stable_steps = 0
+                        # For other cases, just maintain - don't decrease
             
             # Store current signals and timestep for next iteration
             prev_signals = tuple(result)

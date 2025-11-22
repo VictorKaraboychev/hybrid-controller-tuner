@@ -18,7 +18,7 @@ from systems.full import FullSystem
 # Optimization parameters
 optimization_params = OptimizationParameters(
     num_parameters=4,  # Total number of optimization parameters
-    population=100,  # Population size for differential evolution
+    population=20,  # Population size for differential evolution
     max_iterations=1000,  # Maximum iterations for optimization
     de_tol=0.000001,  # Convergence tolerance (0.0 to disable early stopping)
     bounds=[
@@ -38,11 +38,11 @@ optimization_params = OptimizationParameters(
 )
 
 # Output paths
-save_path = "output/inner_response.png"  # Path to save response plot
+save_path = "output/outer_response.png"  # Path to save response plot
 
 
 def main():
-    System = InnerSystem
+    System = OuterSystem
     
     # Optimize the system
     params = optimize(System, optimization_params)
@@ -53,9 +53,9 @@ def main():
     # Create system with optimized parameters and simulate
     results = simulate_system(
         System(params=params), 
-        Step(amplitude=1.4), 
-        0.5,
-        dt_mode="variable"
+        Step(amplitude=0.15), 
+        10.0,
+        0.001
     )
     final_metrics = compute_metrics(results)
     
