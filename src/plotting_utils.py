@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def plot_response(
-    results: list[tuple],
+    results: tuple[np.ndarray, ...],
     metrics: dict,
     save_path: str | None = None,
 ) -> tuple[Figure, list[Axes]]:
@@ -24,15 +24,15 @@ def plot_response(
 
     Parameters
     ----------
-    results : list of tuples
-        List of tuples from simulate_system. Each tuple should be (t, r, y, e, ...)
-        where the first 4 elements are (t, r, y, e). Additional elements are plotted
+    results : tuple of np.ndarray
+        Tuple of arrays from simulate_system. Should be (t, r, y, e, ...)
+        where the first 4 arrays are (t, r, y, e). Additional arrays are plotted
         as control signals.
-        - t: Time value
-        - r: Reference signal value
-        - y: Output response value
-        - e: Error signal value
-        - *other_signals: Any additional signals to plot (will be labeled as "Control signal {n}")
+        - t: Time array
+        - r: Reference signal array
+        - y: Output response array
+        - e: Error signal array
+        - *other_signals: Any additional signal arrays to plot (will be labeled as "Control signal {n}")
     metrics : dict
         Dictionary containing step response metrics (from compute_metrics)
     save_path : str | None, optional
@@ -47,17 +47,16 @@ def plot_response(
     """
     import matplotlib.pyplot as plt
 
-    # Extract signals from list of tuples
-    # First 4 elements are (t, r, y, e), rest are additional control signals
-    t = np.array([row[0] for row in results])
-    r = np.array([row[1] for row in results])
-    y = np.array([row[2] for row in results])
-    e = np.array([row[3] for row in results])
+    # Extract signals from tuple
+    # First 4 arrays are (t, r, y, e), rest are additional control signals
+    t = results[0]
+    r = results[1]
+    y = results[2]
+    e = results[3]
     
     # Get additional signals if present
-    if len(results) > 0 and len(results[0]) > 4:
-        num_other_signals = len(results[0]) - 4
-        other_signals = [np.array([row[4 + i] for row in results]) for i in range(num_other_signals)]
+    if len(results) > 4:
+        other_signals = list(results[4:])
     else:
         other_signals = []
 

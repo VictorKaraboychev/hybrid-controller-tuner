@@ -63,9 +63,9 @@ class FullSystem(Block):
         
         metrics_outer = compute_metrics(results)
         # For inner system, need to create modified results with u_outer as reference
-        # Each tuple is (t, r, y_outer, e_outer, u_outer, y_inner, e_inner, u_inner)
+        # results is (t, r, y_outer, e_outer, u_outer, y_inner, e_inner, u_inner)
         # For inner metrics, we want (t, u_outer, y_inner)
-        inner_results = [(row[0], row[4], row[5]) for row in results]  # (t, u_outer, y_inner)
+        inner_results = (results[0], results[4], results[5])  # (t, u_outer, y_inner)
         metrics_inner = compute_metrics(inner_results)
         
         return metrics_outer["tracking_error"] + metrics_inner["tracking_error"]

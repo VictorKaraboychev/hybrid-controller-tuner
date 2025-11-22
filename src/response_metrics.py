@@ -9,24 +9,24 @@ from typing import Dict
 import numpy as np
 
 
-def compute_metrics(results: list[tuple]) -> Dict[str, float]:
+def compute_metrics(results: tuple[np.ndarray, ...]) -> Dict[str, float]:
     """
     Extract steady-state, overshoot, settling-time, peak, and tracking_error metrics.
     
     Parameters
     ----------
-    results : list of tuples
-        List of tuples from simulate_system. Each tuple should be (t, r, y, ...)
-        where the first 3 elements are (t, r, y). Additional elements are ignored.
-        - t: Time value
-        - r: Reference signal value
-        - y: Output response value
+    results : tuple of np.ndarray
+        Tuple of arrays from simulate_system. Should be (t, r, y, ...)
+        where the first 3 arrays are (t, r, y). Additional arrays are ignored.
+        - t: Time array
+        - r: Reference signal array
+        - y: Output response array
     """
 
-    # Extract t, r, y from list of tuples (first 3 elements of each tuple)
-    t = np.array([row[0] for row in results])
-    r = np.array([row[1] for row in results])
-    y = np.array([row[2] for row in results])
+    # Extract t, r, y from tuple (first 3 arrays)
+    t = results[0]
+    r = results[1]
+    y = results[2]
 
     if len(t) == 0 or len(y) == 0:
         raise ValueError("Time and response vectors must be non-empty.")
