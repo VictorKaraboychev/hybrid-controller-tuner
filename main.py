@@ -17,8 +17,8 @@ from systems.full import FullSystem
 
 # Optimization parameters
 optimization_params = OptimizationParameters(
-    num_parameters=8,  # Total number of optimization parameters
-    population=20,  # Population size for differential evolution
+    num_parameters=4,  # Total number of optimization parameters
+    population=100,  # Population size for differential evolution
     max_iterations=1000,  # Maximum iterations for optimization
     de_tol=0.000001,  # Convergence tolerance (0.0 to disable early stopping)
     bounds=[
@@ -27,10 +27,10 @@ optimization_params = OptimizationParameters(
         (-100.0, 100.0),  # Kd bounds (outer)
         (0.01, 1.0),  # Sampling time bounds (outer)
         
-        (-100.0, 100.0),  # Kp bounds (inner)
-        (-5.0, 5.0),  # Ki bounds (inner)
-        (-100.0, 100.0),  # Kd bounds (inner)
-        (0.005, 1.0),  # Sampling time bounds (inner)
+        # (-100.0, 100.0),  # Kp bounds (inner)
+        # (-5.0, 5.0),  # Ki bounds (inner)
+        # (-100.0, 100.0),  # Kd bounds (inner)
+        # (0.005, 1.0),  # Sampling time bounds (inner)
     ],
     random_state=None,  # Random seed for reproducibility (None for random)
     verbose=True,  # Print optimization progress
@@ -38,11 +38,11 @@ optimization_params = OptimizationParameters(
 )
 
 # Output paths
-save_path = "output/full_response.png"  # Path to save response plot
+save_path = "output/inner_response.png"  # Path to save response plot
 
 
 def main():
-    System = FullSystem
+    System = InnerSystem
     
     # Optimize the system
     params = optimize(System, optimization_params)
@@ -54,8 +54,8 @@ def main():
     results = simulate_system(
         System(params=params), 
         Step(amplitude=1.4), 
-        0.5, 
-        0.001
+        0.5,
+        dt_mode="variable"
     )
     final_metrics = compute_metrics(results)
     

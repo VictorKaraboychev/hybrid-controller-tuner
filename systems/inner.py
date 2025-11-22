@@ -37,6 +37,6 @@ class InnerSystem(Block):
         return r, y, e, u
     
     def cost(self) -> float:
-        results = simulate_system(self, Step(amplitude=1.4), 1.0)
+        results = simulate_system(self, Step(amplitude=1.4), 0.5, dt=0.002)
         metrics = compute_metrics(results)
         return metrics["tracking_error"]

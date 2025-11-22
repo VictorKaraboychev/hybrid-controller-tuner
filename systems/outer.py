@@ -32,6 +32,6 @@ class OuterSystem(Block):
         return r, y, e, u
     
     def cost(self) -> float:
-        results = simulate_system(self, Step(amplitude=0.15), 15.0)
+        results = simulate_system(self, Step(amplitude=0.15), 15.0, dt_mode="variable")
         metrics = compute_metrics(results)
         return metrics["tracking_error"]
