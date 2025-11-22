@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from systems.full import FullSystem
 
 # PID parameters: [Kp, Ki, Kd]
-params = np.array([-2.482355,0.013532,-3.655630,0.425076,-56.831065,-4.998901,-0.691913,0.005996])
+params = np.array([-1.920872,0.009013,-3.117162,0.394065,-7.892344,-0.998973,-0.177016,0.014990])
 
 print("Testing PID controller with:")
 print(f"  Kp = {params[0]}")
@@ -25,7 +25,7 @@ print(f"  Sampling time = {params[3]}")
 print()
 
 # Simulation parameters
-t_end = 15.0
+t_end = 10.0
 step_amplitude = 0.15
 
 system = FullSystem(params=params)
@@ -33,7 +33,7 @@ system = FullSystem(params=params)
 # Run simulation
 print("Running simulation...")
 r_func = Step(amplitude=0.15)
-results = simulate_system(system, r_func, t_end, dt_mode="variable")
+results = simulate_system(system, r_func, t_end)
 
 # Compute metrics
 metrics_outer = compute_metrics(results)
