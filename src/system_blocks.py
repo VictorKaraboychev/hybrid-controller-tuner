@@ -519,18 +519,14 @@ class PID:
         self.y = 0.0
 
     @classmethod
-    def from_params(
-        cls, params: np.ndarray, sampling_time: float, Tf: float | None = None
-    ):
+    def from_params(cls, params: np.ndarray, sampling_time: float):
         """
         Create a PID block from parameter array.
 
         Parameters
         ----------
         params : np.ndarray
-            Parameter array: [Kp, Ki, Kd] or [Kp, Ki, Kd, Tf]
-            If length 3: [Kp, Ki, Kd]
-            If length 4: [Kp, Ki, Kd, Tf]
+            Parameter array: [Kp, Ki, Kd]
         sampling_time : float
             Sampling time in seconds
 

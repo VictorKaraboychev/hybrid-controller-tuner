@@ -8,6 +8,10 @@ then provides a step method to run the system simulation.
 
 import numpy as np
 from src.system_blocks import ContinuousTF, DiscreteTF, Saturation, PID
+
+# Create a separate random number generator for disturbances
+# This ensures deterministic behavior while not affecting other random operations
+_disturbance_rng = np.random.RandomState(seed=42)
 from src.tune_discrete_controller import (
     PerformanceSpecs,
     CostWeights,
@@ -86,7 +90,7 @@ class System:
 
         self.pid_controller = PID.from_params(
             params=params,
-            sampling_time=0.01,
+            sampling_time=params[3],
         )
     
     def reset(self):
@@ -134,9 +138,17 @@ class System:
 
         # # Inner Plant
         # y2 = self.p2.step(u2)
+        
+        t_discrete = round(t / 2.0) * 2.0
+        _disturbance_rng.seed(int(t_discrete * 1000) % (2**31))  # Seed based on discretized time
+        random_disturbance = _disturbance_rng.uniform(-0.05, 0.05)
+        
+        # Apply disturbance to plant input (load disturbance)
+        # This simulates a load or external force acting on the system
+        u1_with_disturbance = u1 # + random_disturbance
 
         # Outer Plant
-        y1 = self.p1.step(u1)
+        y1 = self.p1.step(u1_with_disturbance)
 
         return e1, u1, y1
 
@@ -161,7 +173,7 @@ cost_weights = CostWeights(
 )
 
 system_params = SystemParameters(
-    num_parameters=3,  # Total number of optimization parameters
+    num_parameters=4,  # Total number of optimization parameters
     t_end=15.0,  # Simulation end time (seconds)
     step_amplitude=0.15,  # Step input amplitude
     dt=SIMULATION_DT,  # Time step for continuous plant simulation (seconds)
@@ -173,9 +185,10 @@ optimization_params = OptimizationParameters(
     max_iterations=1000,  # Maximum iterations for optimization
     de_tol=0.0,  # Convergence tolerance (0.0 to disable early stopping)
     bounds=[
-        (-10.0, 10.0),  # Kp bounds
-        (-1.0, 1.0),  # Ki bounds (much smaller for stability)
-        (-10.0, 10.0),  # Kd bounds (much smaller for stability)
+        (-100.0, 100.0),  # Kp bounds
+        (-1.0, 1.0),  # Ki bounds
+        (-100.0, 100.0),  # Kd bounds
+        (0.01, 1.0),  # Sampling time bounds
     ],
     random_state=None,  # Random seed for reproducibility (None for random)
     verbose=True,  # Print optimization progress
