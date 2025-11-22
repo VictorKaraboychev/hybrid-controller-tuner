@@ -10,9 +10,43 @@ This module provides reusable blocks for building control systems:
 
 import numpy as np
 from scipy import signal
+from abc import ABC, abstractmethod
 
 
-class ContinuousTF:
+class Block(ABC):
+    """
+    Base class for all system blocks and systems.
+    
+    All blocks must implement __call__(t, r) and reset() methods.
+    Systems may return tuples instead of single float values.
+    """
+    
+    @abstractmethod
+    def __call__(self, t: float, r: float):
+        """
+        Step the block with time and input signal.
+        
+        Parameters
+        ----------
+        t : float
+            Current time (seconds)
+        r : float
+            Input signal (reference/input)
+        
+        Returns
+        -------
+        float or tuple
+            Output signal (blocks return float, systems may return tuple)
+        """
+        pass
+    
+    @abstractmethod
+    def reset(self) -> None:
+        """Reset the block's internal state."""
+        pass
+
+
+class ContinuousTF(Block):
     """
     Continuous-time transfer function block.
 
@@ -31,14 +65,11 @@ class ContinuousTF:
     den : array-like
         Denominator coefficients in descending powers of s.
         Example: [1, 3, 2] represents s^2 + 3*s + 2
-    dt : float
-        Integration time step for continuous-time simulation (seconds)
     """
 
-    def __init__(self, num, den, dt=0.001):
+    def __init__(self, num, den):
         self.num = np.array(num, dtype=float)
         self.den = np.array(den, dtype=float)
-        self.dt = dt
 
         # Convert to state-space for step-by-step simulation
         try:
@@ -62,19 +93,23 @@ class ContinuousTF:
             self.state = np.zeros((self.A.shape[0],))
             self.last_input = 0.0
             self.y = 0.0  # Last output value
+            self.last_time = None  # Track last call time to compute dt
         except Exception as e:
             raise ValueError(f"Failed to convert transfer function to state-space: {e}")
 
-    def step(self, u):
+    def __call__(self, t: float, r: float) -> float:
         """
-        Step the continuous-time transfer function with input u.
+        Step the continuous-time transfer function with input r at time t.
 
         Uses numerical integration (Euler method) to update the state.
-        For a state-space system: dx/dt = A*x + B*u, y = C*x + D*u
+        For a state-space system: dx/dt = A*x + B*r, y = C*x + D*r
+        The time step dt is computed from the time since the last call.
 
         Parameters
         ----------
-        u : float
+        t : float
+            Current time (seconds)
+        r : float
             Input signal at current time step
 
         Returns
@@ -82,23 +117,35 @@ class ContinuousTF:
         y : float
             Output signal at current time step (after stepping)
         """
+        # Compute dt from time difference
+        if self.last_time is None:
+            # First call: use a small default dt
+            dt = 0.001
+        else:
+            dt = t - self.last_time
+            # Ensure dt is positive and reasonable
+            if dt <= 0:
+                dt = 0.001  # Fallback to default if time goes backwards or same
+        
+        self.last_time = t
+
         # Compute output: y = C*x + D*u
         y = self.C @ self.state
         if self.D.size > 0 and np.any(self.D != 0):
             if self.D.ndim > 1:
-                y = y + self.D @ np.array([u])
+                y = y + self.D @ np.array([r])
             else:
-                y = y + self.D * u
+                y = y + self.D * r
 
         self.y = y.flatten()[0] if y.size > 0 else 0.0
 
         # Update state using Euler integration
         # x[k+1] = x[k] + dt * (A*x[k] + B*u)
         B_flat = self.B.flatten() if self.B.ndim > 1 else self.B
-        dx = self.A @ self.state + B_flat * u
-        self.state = self.state + self.dt * dx
+        dx = self.A @ self.state + B_flat * r
+        self.state = self.state + dt * dx
 
-        self.last_input = u
+        self.last_input = r
         return self.y
 
     def reset(self):
@@ -106,6 +153,7 @@ class ContinuousTF:
         self.state = np.zeros((self.A.shape[0],))
         self.last_input = 0.0
         self.y = 0.0
+        self.last_time = None
 
     def is_stable(self, tol: float = 1e-10) -> bool:
         """
@@ -131,39 +179,9 @@ class ContinuousTF:
         # For stability: Re(pole) < 0 for all poles
         return np.all(np.real(poles) < -tol)
 
-    @classmethod
-    def from_params(
-        cls, params: np.ndarray, num_order: int, den_order: int, dt: float = 0.001
-    ):
-        """
-        Create a ContinuousTF block from parameter array.
-
-        Parameters
-        ----------
-        params : np.ndarray
-            Parameter array: [num_coeffs..., den_coeffs...]
-            First num_order+1 elements are numerator coefficients
-            Next den_order elements are denominator coefficients (leading 1.0 is assumed)
-        num_order : int
-            Numerator order (degree)
-        den_order : int
-            Denominator order (degree)
-        dt : float, optional
-            Integration time step (default: 0.001)
-
-        Returns
-        -------
-        ContinuousTF
-            ContinuousTF block instance
-        """
-        num_coeffs = num_order + 1
-        num = params[:num_coeffs]
-        den_rest = params[num_coeffs : num_coeffs + den_order]
-        den = np.concatenate(([1.0], den_rest))
-        return cls(num=num, den=den, dt=dt)
 
 
-class DiscreteTF:
+class DiscreteTF(Block):
     """
     Discrete-time transfer function block with zero-order hold.
 
@@ -226,9 +244,9 @@ class DiscreteTF:
         self.last_sample_time = -np.inf  # Initialize to allow first sample
         self.y = 0.0  # Last output value (accessible via tf.y)
 
-    def step(self, t, u):
+    def __call__(self, t: float, r: float) -> float:
         """
-        Step the discrete-time transfer function with input u.
+        Step the discrete-time transfer function with input r.
 
         This method handles discrete sampling automatically. It only updates the controller
         state at discrete sample times (every sampling_time seconds). Between samples,
@@ -240,7 +258,7 @@ class DiscreteTF:
         ----------
         t : float
             Current time (seconds)
-        u : float
+        r : float
             Input signal at current time
 
         Returns
@@ -258,28 +276,28 @@ class DiscreteTF:
             # y[k] = C*x[k] + D*u[k]
             y = (self.C @ self.state).flatten()
             if self.D.size > 0 and np.any(self.D != 0):
-                u_vec = (
-                    np.array([[u]]) if np.isscalar(u) else np.array([u]).reshape(-1, 1)
+                r_vec = (
+                    np.array([[r]]) if np.isscalar(r) else np.array([r]).reshape(-1, 1)
                 )
-                y = y + (self.D @ u_vec).flatten()
+                y = y + (self.D @ r_vec).flatten()
             self.y = float(y[0]) if y.size > 0 else 0.0
 
             # Update state for next sample: x[k+1] = A*x[k] + B*u[k]
             if self.B.ndim == 1:
                 # B is a 1D array (column vector)
-                self.state = self.A @ self.state + self.B * u
+                self.state = self.A @ self.state + self.B * r
             elif self.B.ndim == 2:
                 # B is a 2D matrix
                 if self.B.shape[1] == 1:
                     # B is a column vector (n x 1)
-                    self.state = self.A @ self.state + (self.B * u).flatten()
+                    self.state = self.A @ self.state + (self.B * r).flatten()
                 else:
                     # B is a matrix (n x m)
-                    u_vec = np.array([u]) if np.isscalar(u) else u
-                    self.state = self.A @ self.state + (self.B @ u_vec).flatten()
+                    r_vec = np.array([r]) if np.isscalar(r) else r
+                    self.state = self.A @ self.state + (self.B @ r_vec).flatten()
             else:
                 # Fallback
-                self.state = self.A @ self.state + self.B * u
+                self.state = self.A @ self.state + self.B * r
 
             # Store output and update sample time
             self.last_sample_time = t
@@ -315,39 +333,9 @@ class DiscreteTF:
         # For stability: |pole| < 1 for all poles
         return np.all(np.abs(poles) < 1.0 - tol)
 
-    @classmethod
-    def from_params(
-        cls, params: np.ndarray, num_order: int, den_order: int, sampling_time: float
-    ):
-        """
-        Create a DiscreteTF block from parameter array.
-
-        Parameters
-        ----------
-        params : np.ndarray
-            Parameter array: [num_coeffs..., den_coeffs...]
-            First num_order+1 elements are numerator coefficients
-            Next den_order elements are denominator coefficients (leading 1.0 is assumed)
-        num_order : int
-            Numerator order (degree)
-        den_order : int
-            Denominator order (degree)
-        sampling_time : float
-            Sampling time in seconds
-
-        Returns
-        -------
-        DiscreteTF
-            DiscreteTF block instance
-        """
-        num_coeffs = num_order + 1
-        num = params[:num_coeffs]
-        den_rest = params[num_coeffs : num_coeffs + den_order]
-        den = np.concatenate(([1.0], den_rest))
-        return cls(num=num, den=den, sampling_time=sampling_time)
 
 
-class Saturation:
+class Saturation(Block):
     """
     Saturation/limiting block.
 
@@ -370,13 +358,15 @@ class Saturation:
             if min_val > max_val:
                 raise ValueError(f"min_val ({min_val}) must be <= max_val ({max_val})")
 
-    def step(self, u):
+    def __call__(self, t: float, r: float) -> float:
         """
         Apply saturation to input signal.
 
         Parameters
         ----------
-        u : float
+        t : float
+            Current time (seconds) - unused but required by Block interface
+        r : float
             Input signal
 
         Returns
@@ -384,7 +374,7 @@ class Saturation:
         y : float
             Saturated output signal
         """
-        y = u
+        y = r
 
         if self.min_val is not None:
             y = max(self.min_val, y)
@@ -397,38 +387,9 @@ class Saturation:
         """Reset the block (no-op for saturation, but included for consistency)."""
         pass
 
-    @classmethod
-    def from_params(cls, params: np.ndarray):
-        """
-        Create a Saturation block from parameter array.
-
-        Parameters
-        ----------
-        params : np.ndarray
-            Parameter array: [min_val, max_val] or [min_val] or [max_val]
-            If length 1: only that limit is set (min if negative, max if positive)
-            If length 2: [min_val, max_val]
-
-        Returns
-        -------
-        Saturation
-            Saturation block instance
-        """
-        if len(params) == 1:
-            val = params[0]
-            if val < 0:
-                return cls(min_val=val, max_val=None)
-            else:
-                return cls(min_val=None, max_val=val)
-        elif len(params) == 2:
-            return cls(min_val=params[0], max_val=params[1])
-        else:
-            raise ValueError(
-                f"Saturation from_params expects 1 or 2 parameters, got {len(params)}"
-            )
 
 
-class PID:
+class PID(Block):
     """
     Discrete-time PID controller block.
 
@@ -469,15 +430,15 @@ class PID:
         self.last_sample_time = -np.inf
         self.y = 0.0  # Last output value
 
-    def step(self, t: float, u: float) -> float:
+    def __call__(self, t: float, r: float) -> float:
         """
-        Step the PID controller with input u.
+        Step the PID controller with input r.
 
         Parameters
         ----------
         t : float
             Current time (seconds)
-        u : float
+        r : float
             Input signal (error)
 
         Returns
@@ -490,14 +451,14 @@ class PID:
             # Time to sample - update PID controller
             
             # Proportional term
-            u_p = self.Kp * u
+            u_p = self.Kp * r
             
             # Integral term: u_i[k] = u_i[k-1] + Ki * Ts * e[k]
-            self.integral += self.Ki * self.sampling_time * u
+            self.integral += self.Ki * self.sampling_time * r
             u_i = self.integral
             
             # Derivative
-            error_diff = u - self.last_error
+            error_diff = r - self.last_error
             u_d = 0.0
             # Skip first sample
             if (self.last_sample_time != -np.inf):
@@ -507,7 +468,7 @@ class PID:
             self.y = u_p + u_i + u_d
             
             # Update state
-            self.last_error = u
+            self.last_error = r
             self.last_sample_time = t
         return self.y
 
@@ -518,30 +479,3 @@ class PID:
         self.last_sample_time = -np.inf
         self.y = 0.0
 
-    @classmethod
-    def from_params(cls, params: np.ndarray, sampling_time: float):
-        """
-        Create a PID block from parameter array.
-
-        Parameters
-        ----------
-        params : np.ndarray
-            Parameter array: [Kp, Ki, Kd]
-        sampling_time : float
-            Sampling time in seconds
-
-        Returns
-        -------
-        PID
-            PID block instance
-        """
-        if len(params) < 3:
-            raise ValueError(
-                f"PID from_params expects at least 3 parameters [Kp, Ki, Kd], got {len(params)}"
-            )
-
-        Kp = params[0]
-        Ki = params[1]
-        Kd = params[2]
-
-        return cls(Kp=Kp, Ki=Ki, Kd=Kd, sampling_time=sampling_time)
