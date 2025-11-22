@@ -9,15 +9,30 @@ from typing import Dict
 import numpy as np
 
 
-def compute_step_metrics(
-    t: np.ndarray, y: np.ndarray, reference: float = 1.0
-) -> Dict[str, float]:
+def compute_metrics(results: tuple[np.ndarray, ...]) -> Dict[str, float]:
     """
-    Extract steady-state, overshoot, settling-time, and peak metrics.
+    Extract steady-state, overshoot, settling-time, peak, and tracking_error metrics.
+    
+    Parameters
+    ----------
+    results : tuple of np.ndarray
+        Tuple of arrays from simulate_system. Should be (t, r, y, ...)
+        where the first 3 arrays are (t, r, y). Additional arrays are ignored.
+        - t: Time array
+        - r: Reference signal array
+        - y: Output response array
     """
+
+    # Extract t, r, y from tuple (first 3 arrays)
+    t = results[0]
+    r = results[1]
+    y = results[2]
 
     if len(t) == 0 or len(y) == 0:
         raise ValueError("Time and response vectors must be non-empty.")
+
+    if len(r) != len(y):
+        raise ValueError(f"Reference signal r must have same length as output y. Got {len(r)} vs {len(y)}")
 
     steady_state = y[-1]
     peak = np.max(y)
@@ -36,6 +51,7 @@ def compute_step_metrics(
         dt = t[1] - t[0]
         min_settled_samples = max(1, int(0.1 / dt))  # At least 0.1s
     else:
+        dt = 0.0
         min_settled_samples = 1
 
     for idx in range(len(y)):
@@ -50,9 +66,16 @@ def compute_step_metrics(
             settling_time = t[idx]
             break
 
-    return {
+    # Compute tracking_error: sum of squared error multiplied by delta_t
+    squared_error = (y - r) ** 2
+    tracking_error = np.sum(squared_error) * dt
+
+    metrics = {
         "steady_state": steady_state,
         "percent_overshoot": overshoot_pct,
         "settling_time_2pct": settling_time,
         "peak_value": peak,
+        "tracking_error": tracking_error,
     }
+    
+    return metrics

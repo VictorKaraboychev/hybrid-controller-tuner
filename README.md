@@ -1,15 +1,18 @@
 # Hybrid Controller Tuner
 
-A Python tool for automatically tuning discrete-time controllers for hybrid control systems (discrete controller with continuous plant). The tuner uses differential evolution optimization to find controller parameters that meet specified performance requirements such as overshoot and settling time.
+A Python framework for automatically tuning discrete-time controllers for hybrid control systems (discrete controller with continuous plant). Uses differential evolution optimization to find controller parameters that meet specified performance requirements.
 
 ## Features
 
-- **Hybrid System Simulation**: Simulates discrete-time controllers with continuous-time plants using Zero-Order Hold (ZOH) discretization
-- **Automatic Tuning**: Uses differential evolution to optimize controller parameters
-- **Flexible Controller Structure**: Supports arbitrary polynomial controllers (not limited to PID)
-- **Order Search**: Optional automatic search over different controller orders
-- **Performance Metrics**: Computes overshoot, settling time, and other step response metrics
-- **Visualization**: Generates plots showing output, control signal, and error responses
+- **Block-Based Architecture**: Modular system design using reusable blocks (`Block` base class)
+- **Hybrid System Simulation**: Simulates discrete-time controllers with continuous-time plants using Zero-Order Hold (ZOH)
+- **Adaptive Timestep**: Variable timestep mode for efficient long simulations (up to 9x faster)
+- **Automatic Tuning**: Differential evolution optimization with parallel evaluation
+- **Flexible Controllers**: Supports PID controllers and arbitrary polynomial transfer functions
+- **Signal Generators**: Built-in signal classes (Step, Ramp, Sinusoid, SquareWave, Constant)
+- **Nested Control Systems**: Build cascaded control loops (e.g., outer/inner loops)
+- **Performance Metrics**: Computes overshoot, settling time, tracking error, and more
+- **Visualization**: Generates plots showing output, control signals, and error responses
 
 ## Installation
 
@@ -32,290 +35,436 @@ Required packages:
 - `scipy >= 1.7.0`
 - `matplotlib >= 3.4.0`
 
-## Usage
+## Quick Start
 
 ### Basic Usage
 
-1. **Configure your plant and specifications** in `specs.json` (see Configuration section below)
+1. **Define your control system** in `main.py` or create a new system file:
 
-2. **Run the tuner**:
+```python
+from src.systems import PID, Block, ContinuousTF, Saturation
+from src.signals import Step
+from src.simulate_system import simulate_system
+from src.response_metrics import compute_metrics
+from src.tune_discrete_controller import OptimizationParameters, optimize
+
+class MySystem(Block):
+    def __init__(self, params: np.ndarray):
+        # PID controller: [Kp, Ki, Kd, sampling_time]
+        self.pid = PID(
+            Kp=params[0],
+            Ki=params[1],
+            Kd=params[2],
+            sampling_time=params[3],
+        )
+        # Continuous plant
+        self.plant = ContinuousTF(num=[-2.936], den=[0.031, 1.0, 0.0])
+        # Input saturation
+        self.s = Saturation(min_val=-6.0, max_val=6.0)
+    
+    def reset(self):
+        self.pid.reset()
+        self.plant.reset()
+        self.s.reset()
+    
+    def __call__(self, t: float, r: float):
+        e = r - self.plant.y
+        u = self.pid(t, e)
+        u = self.s(t, u)
+        y = self.plant(t, u)
+        return r, y, e, u
+    
+    def cost(self) -> float:
+        results = simulate_system(self, Step(amplitude=1.4), 1.0)
+        metrics = compute_metrics(results)
+        return metrics["tracking_error"]
+```
+
+2. **Configure optimization parameters**:
+
+```python
+optimization_params = OptimizationParameters(
+    num_parameters=4,  # Number of parameters to optimize
+    population=20,  # Population size for differential evolution
+    max_iterations=1000,  # Maximum iterations
+    de_tol=0.000001,  # Convergence tolerance
+    bounds=[
+        (-100.0, 100.0),  # Kp bounds
+        (-5.0, 5.0),      # Ki bounds
+        (-100.0, 100.0),  # Kd bounds
+        (0.01, 1.0),      # Sampling time bounds
+    ],
+    verbose=True,
+    workers=-1,  # Use all CPUs
+)
+```
+
+3. **Run the optimizer**:
+
+```python
+params = optimize(MySystem, optimization_params)
+```
+
+4. **Simulate and visualize**:
+
+```python
+from src.plotting_utils import plot_response
+
+system = MySystem(params=params)
+results = simulate_system(system, Step(amplitude=1.4), 1.0)
+metrics = compute_metrics(results)
+plot_response(results, metrics, save_path="output/response.png")
+```
+
+## System Architecture
+
+### Block-Based Design
+
+All system components extend the `Block` base class:
+
+```python
+class Block(ABC):
+    @abstractmethod
+    def __call__(self, t: float, r: float) -> float:
+        """Step the block with time t and input r, return output."""
+        pass
+    
+    @abstractmethod
+    def reset(self):
+        """Reset internal state."""
+        pass
+```
+
+### Available Blocks
+
+- **`ContinuousTF`**: Continuous-time transfer functions (s-domain)
+  - Automatically computes `dt` from time difference
+  - Uses Euler integration for state-space representation
+
+- **`DiscreteTF`**: Discrete-time transfer functions (z-domain)
+  - Handles zero-order hold (ZOH) automatically
+  - Updates only at discrete sample times
+
+- **`PID`**: PID controller with direct difference equations
+  - Parameters: `Kp`, `Ki`, `Kd`, `sampling_time`
+  - No derivative filter (simplified implementation)
+
+- **`Saturation`**: Signal limiting block
+  - Parameters: `min_val`, `max_val`
+
+### Signal Generators
+
+Signal classes extend the `Signal` base class:
+
+```python
+from src.signals import Step, Ramp, Sinusoid, SquareWave, Constant
+
+# Step signal
+r_func = Step(amplitude=0.15)
+
+# Ramp signal
+r_func = Ramp(slope=0.1, offset=0.0)
+
+# Sinusoid
+r_func = Sinusoid(amplitude=1.0, frequency=1.0, phase=0.0)
+
+# Square wave
+r_func = SquareWave(amplitude=1.0, frequency=1.0, duty_cycle=0.5)
+
+# Constant
+r_func = Constant(value=0.5)
+```
+
+## Simulation
+
+### Fixed Timestep Mode
+
+```python
+results = simulate_system(
+    system, 
+    Step(amplitude=0.15), 
+    t_end=10.0, 
+    dt=0.001,
+    dt_mode='fixed'  # Default
+)
+```
+
+### Variable Timestep Mode
+
+For long simulations where signals settle, variable timestep can be up to 9x faster:
+
+```python
+results = simulate_system(
+    system,
+    Step(amplitude=0.15),
+    t_end=10.0,
+    dt=0.001,
+    dt_mode='variable',
+    adaptive_tolerance=1.0,  # Higher = more aggressive about increasing dt
+    max_dt=0.1,              # Maximum timestep
+    min_dt=1e-6              # Minimum timestep
+)
+```
+
+**When to use variable timestep:**
+- Long simulations (t_end > 5 seconds)
+- Systems that settle into steady state
+- When accuracy in transients is less critical
+
+**When to use fixed timestep:**
+- Short simulations
+- Need precise transient capture
+- Systems with continuous rapid changes
+
+### Simulation Results
+
+`simulate_system` returns a tuple of numpy arrays:
+
+```python
+results = simulate_system(system, r_func, t_end, dt)
+# results = (t, signal_1, signal_2, ..., signal_n)
+
+# For a system returning (r, y, e, u):
+t, r, y, e, u = results
+```
+
+The tuple format is consistent: `(t, r, y, e, ...other_signals)` where:
+- `t`: Time array
+- `r`: Reference signal array
+- `y`: Output response array
+- `e`: Error signal array
+- Additional signals follow (control signals, etc.)
+
+## System Definition
+
+### Creating a System Class
+
+Your system class must:
+
+1. Extend `Block`
+2. Implement `__init__(self, params: np.ndarray)` - takes optimization parameters
+3. Implement `__call__(self, t: float, r: float)` - returns tuple of signals
+4. Implement `reset(self)` - resets all block states
+5. Implement `cost(self) -> float` - returns cost for optimization
+
+Example:
+
+```python
+class MySystem(Block):
+    def __init__(self, params: np.ndarray):
+        # Initialize blocks from params
+        self.controller = PID(
+            Kp=params[0],
+            Ki=params[1],
+            Kd=params[2],
+            sampling_time=params[3],
+        )
+        self.plant = ContinuousTF(num=[1.0], den=[1.0, 1.0, 0.0])
+        self.saturation = Saturation(min_val=-10.0, max_val=10.0)
+    
+    def reset(self):
+        self.controller.reset()
+        self.plant.reset()
+        self.saturation.reset()
+    
+    def __call__(self, t: float, r: float):
+        # Control loop
+        e = r - self.plant.y
+        u = self.controller(t, e)
+        u = self.saturation(t, u)
+        y = self.plant(t, u)
+        # Return signals in order: (r, y, e, ...other_signals)
+        return r, y, e, u
+    
+    def cost(self) -> float:
+        # Simulate and compute cost
+        results = simulate_system(self, Step(amplitude=1.0), 5.0)
+        metrics = compute_metrics(results)
+        # Return cost (e.g., tracking error)
+        return metrics["tracking_error"]
+```
+
+### Nested Systems
+
+Build cascaded control loops:
+
+```python
+class CascadedSystem(Block):
+    def __init__(self, params: np.ndarray):
+        # Outer loop controller
+        self.outer_pid = PID(Kp=params[0], Ki=params[1], Kd=params[2], 
+                            sampling_time=params[3])
+        self.outer_plant = ContinuousTF(...)
+        
+        # Inner loop controller
+        self.inner_pid = PID(Kp=params[4], Ki=params[5], Kd=params[6],
+                            sampling_time=params[7])
+        self.inner_plant = ContinuousTF(...)
+    
+    def __call__(self, t: float, r: float):
+        # Outer loop
+        e_outer = r - self.outer_plant.y
+        u_outer = self.outer_pid(t, e_outer)
+        
+        # Inner loop (outer output is inner reference)
+        e_inner = u_outer - self.inner_plant.y
+        u_inner = self.inner_pid(t, e_inner)
+        y_inner = self.inner_plant(t, u_inner)
+        
+        # Outer plant uses inner output
+        y_outer = self.outer_plant(t, y_inner)
+        
+        return r, y_outer, e_outer, u_outer, y_inner, e_inner, u_inner
+```
+
+## Optimization
+
+### Optimization Parameters
+
+```python
+from src.tune_discrete_controller import OptimizationParameters
+
+optimization_params = OptimizationParameters(
+    num_parameters=4,           # Number of parameters to optimize
+    population=20,              # Population size (larger = better but slower)
+    max_iterations=1000,        # Maximum iterations
+    de_tol=0.000001,           # Convergence tolerance (0.0 to disable)
+    bounds=[                    # Parameter bounds (one per parameter)
+        (-100.0, 100.0),
+        (-5.0, 5.0),
+        (-100.0, 100.0),
+        (0.01, 1.0),
+    ],
+    random_state=42,            # Random seed (None for random)
+    verbose=True,               # Print progress
+    workers=-1,                 # Number of parallel workers (-1 = all CPUs)
+)
+```
+
+### Running Optimization
+
+```python
+from src.tune_discrete_controller import optimize
+
+# Optimize
+params = optimize(MySystem, optimization_params)
+
+print(f"Optimized parameters: {params}")
+```
+
+### Cost Function
+
+The `cost()` method in your system class defines what to optimize. Common approaches:
+
+```python
+def cost(self) -> float:
+    results = simulate_system(self, Step(amplitude=1.0), 5.0)
+    metrics = compute_metrics(results)
+    
+    # Option 1: Minimize tracking error
+    return metrics["tracking_error"]
+    
+    # Option 2: Weighted combination
+    return (
+        metrics["tracking_error"] +
+        10.0 * max(0, metrics["percent_overshoot"] - 5.0) +
+        5.0 * max(0, metrics["settling_time_2pct"] - 1.0)
+    )
+```
+
+## Performance Metrics
+
+Available metrics from `compute_metrics()`:
+
+- `steady_state`: Final steady-state value
+- `percent_overshoot`: Percentage overshoot
+- `settling_time_2pct`: 2% settling time (seconds)
+- `peak_value`: Peak output value
+- `tracking_error`: Sum of squared errors × dt
+
+```python
+from src.response_metrics import compute_metrics
+
+results = simulate_system(system, r_func, t_end, dt)
+metrics = compute_metrics(results)
+
+print(f"Steady state: {metrics['steady_state']}")
+print(f"Overshoot: {metrics['percent_overshoot']}%")
+print(f"Settling time: {metrics['settling_time_2pct']}s")
+print(f"Tracking error: {metrics['tracking_error']}")
+```
+
+## Visualization
+
+```python
+from src.plotting_utils import plot_response
+
+results = simulate_system(system, r_func, t_end, dt)
+metrics = compute_metrics(results)
+
+fig, axes = plot_response(
+    results,           # Tuple of arrays from simulate_system
+    metrics,           # Dictionary from compute_metrics
+    save_path="output/response.png"
+)
+```
+
+The plot shows:
+1. **Output Response**: With reference, steady-state, 2% settling band, peak annotation
+2. **Error Signal**: Error over time
+3. **Control Signals**: Any additional signals beyond (t, r, y, e)
+
+## Examples
+
+See the `systems/` directory for example implementations:
+
+- `systems/inner.py`: Inner loop system
+- `systems/outer.py`: Outer loop system  
+- `systems/full.py`: Cascaded inner/outer system
+
+Run examples:
 
 ```bash
+# Test PID controller
+python test_pid.py
+
+# Test variable timestep performance
+python test_variable_timestep.py
+
+# Run optimization
 python main.py
 ```
 
-The tuner will:
-
-- Read configuration from `specs.json`
-- Optimize controller parameters to meet your specifications
-- Save the tuned controller to a JSON file (default: `output/controller.json`)
-- Generate a response plot (default: `output/response.png`)
-
-### Configuration File
-
-The tuner reads all configuration from `specs.json`. Here's the structure:
-
-```json
-{
-  "plant": {
-    "numerator": [-2.936],
-    "denominator": [0.031, 1.0, 0.0]
-  },
-  "sampling_time": 0.015,
-  "specs": {
-    "max_overshoot_pct": 5.0,
-    "settling_time_2pct": 0.05,
-    "max_control_signal": null
-  },
-  "cost_weights": {
-    "overshoot_weight": 1.0,
-    "settling_time_weight": 2.0,
-    "steady_state_error_weight": 3.0,
-    "control_signal_limit_weight": 1.0
-  },
-  "t_end": 1.0,
-  "step_amplitude": 1.0,
-  "popsize": 20,
-  "maxiter": 100,
-  "tol": 0.001,
-  "num_order": 1,
-  "den_order": 2,
-  "bound_mag": 2.0,
-  "search_orders": false,
-  "num_order_min": 1,
-  "num_order_max": 5,
-  "den_order_min": 2,
-  "den_order_max": 6,
-  "random_state": null,
-  "quiet": false,
-  "show": false,
-  "save_path": "output/response.png",
-  "output_json": "output/controller.json"
-}
-```
-
-#### Configuration Parameters
-
-**Plant Definition:**
-
-- `plant.numerator`: List of numerator coefficients for the continuous plant transfer function P(s) in descending powers of s
-- `plant.denominator`: List of denominator coefficients for P(s) in descending powers of s
-
-**System Parameters:**
-
-- `sampling_time`: Sampling time Ts in seconds (discrete controller update rate)
-- `t_end`: Simulation end time in seconds
-- `step_amplitude`: Amplitude of step reference input (default: 1.0)
-
-**Performance Specifications:**
-
-- `specs.max_overshoot_pct`: Maximum allowed percent overshoot (e.g., 5.0 for 5%)
-- `specs.settling_time_2pct`: Required 2% settling time in seconds
-- `specs.max_control_signal`: Maximum allowed absolute value of control signal. If exceeded, a penalty is applied. Set to `null` to disable (no limit enforced)
-
-**Cost Weights (Optional):**
-
-- `cost_weights`: Optional object to customize the cost function weights. If omitted, default weights are used:
-  - `overshoot_weight`: Weight for overshoot penalty (default: 1.0)
-  - `settling_time_weight`: Weight for settling time penalty (default: 2.0)
-  - `steady_state_error_weight`: Weight for steady-state error (default: 3.0)
-  - `control_signal_limit_weight`: Weight for control signal limit violation penalty (default: 1.0)
-
-**Optimization Parameters:**
-
-- `popsize`: Population size for differential evolution (default: 25)
-- `maxiter`: Maximum number of iterations (default: 60)
-- `bound_mag`: Magnitude bound for parameter search range (default: 2.0)
-- `random_state`: Random seed for reproducibility (null = random)
-- `tol`: Relative convergence tolerance for differential evolution (default: 0.001). Set to 0 to disable tolerance-based early stopping.
-
-**Note on Early Stopping:** The optimizer uses a convergence tolerance (`tol`, default `0.001`) that may cause it to stop before reaching `maxiter` if the relative improvement in the best solution falls below 0.1% between iterations. This is normal behavior and indicates the optimizer has converged to a local minimum. Adjust the `tol` value in `specs.json` (set `tol` to `0` to disable tolerance-based early stopping) if you want the optimizer to continue iterating longer.
-
-**Controller Structure:**
-
-- `num_order`: Numerator order (degree) for fixed-order tuning. Controller numerator has `num_order + 1` coefficients
-- `den_order`: Denominator order (degree) for fixed-order tuning. Controller denominator has `den_order + 1` coefficients (leading coefficient is always 1.0)
-- **Important**: Controller must be strictly proper: `num_order < den_order`
-
-**Order Search (Optional):**
-
-- `search_orders`: If `true`, automatically searches over different controller orders
-- `num_order_min`, `num_order_max`: Range of numerator orders to search
-- `den_order_min`, `den_order_max`: Range of denominator orders to search
-
-**Output Options:**
-
-- `quiet`: If `true`, suppress optimization progress output
-- `show`: If `true`, display the plot interactively (requires GUI)
-- `save_path`: Path to save the response plot
-- `output_json`: Path to save the tuned controller JSON file
-
-### Example Configurations
-
-#### Example 1: Simple First-Order Plant
-
-```json
-{
-  "plant": {
-    "numerator": [-0.258873],
-    "denominator": [1.0, 0.0, 0.0]
-  },
-  "sampling_time": 0.5,
-  "specs": {
-    "max_overshoot_pct": 45.0,
-    "settling_time_2pct": 7.0,
-    "max_control_signal": 0.7
-  },
-  "cost_weights": {
-    "overshoot_weight": 1.0,
-    "settling_time_weight": 2.0,
-    "steady_state_error_weight": 3.0,
-    "control_signal_limit_weight": 2.0
-  },
-  "t_end": 30.0,
-  "step_amplitude": 0.15,
-  "popsize": 20,
-  "maxiter": 250,
-  "tol": 0.0,
-  "num_order": 1,
-  "den_order": 2,
-  "quiet": false,
-  "show": false,
-  "save_path": "output/outer_response.png",
-  "output_json": "output/outer_controller.json"
-}
-```
-
-#### Example 2: Second-Order Plant with Strict Requirements
-
-```json
-{
-  "plant": {
-    "numerator": [-2.936],
-    "denominator": [0.031, 1.0, 0.0]
-  },
-  "sampling_time": 0.015,
-  "specs": {
-    "max_overshoot_pct": 5.0,
-    "settling_time_2pct": 0.25,
-    "max_control_signal": 6.0
-  },
-  "cost_weights": {
-    "overshoot_weight": 1.0,
-    "settling_time_weight": 2.0,
-    "steady_state_error_weight": 3.0,
-    "control_signal_limit_weight": 2.0
-  },
-  "t_end": 1.0,
-  "step_amplitude": 1.4,
-  "popsize": 20,
-  "maxiter": 250,
-  "tol": 0.0,
-  "num_order": 1,
-  "den_order": 2,
-  "quiet": false,
-  "show": false,
-  "save_path": "output/inner_response.png",
-  "output_json": "output/inner_controller.json"
-}
-```
-
-## Output
-
-### Controller JSON File
-
-The tuned controller is saved as a JSON file with the following structure:
-
-```json
-{
-  "controller": {
-    "numerator": [-0.5564943057180946, 0.5564946941656995],
-    "denominator": [1.0, -1.3023616512108467, 0.5148301400280902]
-  },
-  "structure": {
-    "num_order": 1,
-    "den_order": 2
-  },
-  "metrics": {
-    "steady_state": 0.9999999988805117,
-    "percent_overshoot": 1.96954681658477,
-    "settling_time_2pct": 5.0,
-    "peak_value": 1.0196954670243106
-  },
-  "plant": {
-    "numerator": [-0.258873],
-    "denominator": [1.0, 0.0, 0.0]
-  },
-  "sampling_time": 0.5
-}
-```
-
-The controller transfer function D[z] is defined by:
-
-- `controller.numerator`: Numerator coefficients in descending powers of z
-- `controller.denominator`: Denominator coefficients in descending powers of z
-
-### Response Plot
-
-The generated plot shows four subplots:
-
-1. **Output Response**: Step response with reference, steady-state, 2% settling band, peak annotation, and settling time marker
-2. **Control Signal**: Discrete control signal u[k] shown as Zero-Order Hold (ZOH)
-3. **Error Signal**: Error e(t) = r(t) - y(t)
-4. **Pole-Zero Plot**: Controller poles (red 'x') and zeros (blue 'o') on the z-plane with unit circle. All poles must be inside the unit circle for stability.
-
-![Hybrid System Response](response.png)
-
-## How It Works
-
-1. **Plant Discretization**: The continuous plant P(s) is discretized using Zero-Order Hold (ZOH) to obtain P[z]
-
-2. **Controller Structure**: The discrete controller D[z] is parameterized as a rational transfer function with specified numerator and denominator orders
-
-3. **Optimization**: Differential evolution searches for controller parameters that minimize a cost function based on:
-
-   - Overshoot violation penalty
-   - Settling time violation penalty
-   - Control signal limit violation penalty (if `max_control_signal` is specified)
-
-4. **Simulation**: Each candidate controller is evaluated by simulating the hybrid closed-loop system:
-
-   - Discrete controller: e[k] → u[k] = D[z]e[k]
-   - Zero-Order Hold: u[k] → u(t)
-   - Continuous plant: u(t) → y(t) = P(s)u(t)
-   - Error: e(t) = r(t) - y(t), sampled to e[k]
-
-5. **Validation**: The final controller is validated and metrics are computed
-
 ## Tips
 
-- **Strict Properness**: Ensure `num_order < den_order` for a causal, implementable controller
-- **Sampling Time**: Choose an appropriate sampling time (typically 10-20x faster than the plant's dominant time constant)
-- **Optimization**: Increase `popsize` and `maxiter` for better results, but at the cost of longer computation time
-- **Order Search**: Use `search_orders: true` to automatically find the best controller structure, but this significantly increases computation time
-- **Tight Specs**: Very tight specifications (low overshoot, fast settling) may require higher-order controllers or may be infeasible
+- **Variable Timestep**: Use for long simulations (t_end > 5s) to get 5-9x speedup
+- **Optimization**: Increase `population` and `max_iterations` for better results
+- **Sampling Time**: Choose 10-20x faster than plant's dominant time constant
+- **Bounds**: Set realistic bounds based on your system's expected parameter ranges
+- **Parallel Evaluation**: Use `workers=-1` to utilize all CPU cores
+- **Cost Function**: Design your cost function to match your priorities (tracking vs. overshoot vs. settling time)
 
 ## Troubleshooting
 
-**"System appears unstable"**: The optimized controller may be unstable. Try:
+**Optimization doesn't converge:**
+- Increase `population` and/or `max_iterations`
+- Adjust parameter `bounds` to more appropriate ranges
+- Check that your cost function is well-behaved
 
-- Increasing `bound_mag` to allow larger parameter values
-- Using a higher-order controller (increase `den_order`)
-- Relaxing performance specifications
+**System appears unstable:**
+- Check that controller parameters are within reasonable bounds
+- Verify plant transfer function is correct
+- Consider using a higher-order controller
 
-**Optimization stops early before maxiter**: This is normal behavior. The optimizer uses a convergence tolerance (`tol=0.001`) and stops when the relative improvement falls below 0.1%. This indicates convergence to a local minimum. The optimizer may still find better solutions in later iterations, but the improvement rate has slowed significantly. If you want to force full iterations, you can modify the specs to set `tol=0`.
+**Variable timestep too slow:**
+- Increase `adaptive_tolerance` (e.g., 1.0 or higher)
+- Increase `max_dt` to allow larger timesteps
+- Use fixed timestep for short simulations
 
-**Optimization doesn't converge**: Try:
-
-- Increasing `maxiter` and/or `popsize`
-- Adjusting `bound_mag` to a more appropriate range
-- Using order search to find a better controller structure
-
-**Controller not meeting specs**: The specifications may be too tight. Consider:
-
-- Relaxing `max_overshoot_pct` or `settling_time_2pct`
-- Using a higher-order controller
-- Increasing optimization iterations
+**Simulation accuracy issues:**
+- Use fixed timestep mode for precise results
+- Decrease `dt` for better resolution
+- Check that `max_dt` in variable mode isn't too large
 
 ## License
 
