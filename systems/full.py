@@ -59,13 +59,36 @@ class FullSystem(Block):
         return r, y_outer, e_outer, u_outer, y_inner, e_inner, u_inner
       
     def cost(self) -> float:
-        results = simulate_system(self, Step(amplitude=0.15), 10.0, dt=0.005)
+        results = simulate_system(self, Step(amplitude=0.15), 5.0, dt=0.015)
         
         metrics_outer = compute_metrics(results)
-        # For inner system, need to create modified results with u_outer as reference
-        # results is (t, r, y_outer, e_outer, u_outer, y_inner, e_inner, u_inner)
-        # For inner metrics, we want (t, u_outer, y_inner)
-        inner_results = (results[0], results[4], results[5])  # (t, u_outer, y_inner)
+        # For inner system: (t, r, y, e, u) where r=u_outer, y=y_inner, e=e_inner, u=u_inner
+        inner_results = (results[0], results[4], results[5], results[6], results[7])  # (t, u_outer, y_inner, e_inner, u_inner)
         metrics_inner = compute_metrics(inner_results)
         
-        return metrics_outer["tracking_error"] + metrics_inner["tracking_error"]
+        # Control effort bounds penalties
+        control_effort_penalty_outer = max(0.0, metrics_outer["max_control_effort"] - 0.7)
+        control_effort_penalty_inner = max(0.0, metrics_inner["max_control_effort"] - 6.0)
+        
+        # Overshoot bounds penalties
+        overshoot_penalty_outer = max(0.0, metrics_outer["percent_overshoot"] - 45.0)
+        overshoot_penalty_inner = max(0.0, metrics_inner["percent_overshoot"] - 5.0)
+        
+        # Settling time bounds penalties
+        settling_time_penalty_outer = max(0.0, metrics_outer["settling_time_2pct"] - 5.0)
+        settling_time_penalty_inner = max(0.0, metrics_inner["settling_time_2pct"] - 0.25)
+        
+        steady_state_penalty_outer = max(0.0, abs(metrics_outer["steady_state"] - 0.15))
+        tracking_error_penalty_inner = metrics_inner["tracking_error"]
+        
+        cost = (
+					control_effort_penalty_outer +
+					control_effort_penalty_inner +
+					overshoot_penalty_outer +
+					overshoot_penalty_inner +
+					settling_time_penalty_outer +
+					settling_time_penalty_inner +
+					steady_state_penalty_outer
+				)
+        
+        return cost

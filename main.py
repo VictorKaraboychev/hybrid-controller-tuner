@@ -18,19 +18,19 @@ from systems.full import FullSystem
 # Optimization parameters
 optimization_params = OptimizationParameters(
     num_parameters=4,  # Total number of optimization parameters
-    population=20,  # Population size for differential evolution
-    max_iterations=1000,  # Maximum iterations for optimization
-    de_tol=0.000001,  # Convergence tolerance (0.0 to disable early stopping)
+    population=25,  # Population size for differential evolution
+    max_iterations=400,  # Maximum iterations for optimization
+    de_tol=0.001,  # Convergence tolerance (0.0 to disable early stopping)
     bounds=[
-        (-100.0, 100.0),  # Kp bounds (outer)
-        (-5.0, 5.0),  # Ki bounds (outer)
-        (-100.0, 100.0),  # Kd bounds (outer)
-        (0.01, 1.0),  # Sampling time bounds (outer)
+        # (-25.0, 25.0),  # Kp bounds (outer)
+        # (-1.0, 1.0),  # Ki bounds (outer)
+        # (-10.0, 10.0),  # Kd bounds (outer)
+        # (0.01, 1.0),  # Sampling time bounds (outer)
         
-        # (-100.0, 100.0),  # Kp bounds (inner)
-        # (-5.0, 5.0),  # Ki bounds (inner)
-        # (-100.0, 100.0),  # Kd bounds (inner)
-        # (0.005, 1.0),  # Sampling time bounds (inner)
+        (-100.0, 100.0),  # Kp bounds (inner)
+        (-5.0, 5.0),  # Ki bounds (inner)
+        (-100.0, 100.0),  # Kd bounds (inner)
+        (0.005, 0.05),  # Sampling time bounds (inner)
     ],
     random_state=None,  # Random seed for reproducibility (None for random)
     verbose=True,  # Print optimization progress
@@ -55,7 +55,7 @@ def main():
         System(params=params), 
         Step(amplitude=0.15), 
         10.0,
-        0.001
+        0.0001
     )
     final_metrics = compute_metrics(results)
     

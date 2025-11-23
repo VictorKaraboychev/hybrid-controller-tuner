@@ -11,28 +11,41 @@ import numpy as np
 
 def compute_metrics(results: tuple[np.ndarray, ...]) -> Dict[str, float]:
     """
-    Extract steady-state, overshoot, settling-time, peak, and tracking_error metrics.
+    Extract steady-state, overshoot, settling-time, peak, tracking_error, and max_control_effort metrics.
     
     Parameters
     ----------
     results : tuple of np.ndarray
-        Tuple of arrays from simulate_system. Should be (t, r, y, ...)
-        where the first 3 arrays are (t, r, y). Additional arrays are ignored.
+        Tuple of arrays from simulate_system. Must be (t, r, y, e, u, ...)
+        where the first 5 arrays are required:
         - t: Time array
         - r: Reference signal array
         - y: Output response array
+        - e: Error signal array
+        - u: Control signal array
+        Additional signals beyond index 4 are ignored.
     """
 
-    # Extract t, r, y from tuple (first 3 arrays)
+    if len(results) < 5:
+        raise ValueError(
+            f"Results must contain at least 5 arrays (t, r, y, e, u). Got {len(results)} arrays."
+        )
+
+    # Extract required signals
     t = results[0]
     r = results[1]
     y = results[2]
+    e = results[3]
+    u = results[4]
 
     if len(t) == 0 or len(y) == 0:
         raise ValueError("Time and response vectors must be non-empty.")
 
-    if len(r) != len(y):
-        raise ValueError(f"Reference signal r must have same length as output y. Got {len(r)} vs {len(y)}")
+    if len(r) != len(y) or len(e) != len(y) or len(u) != len(y):
+        raise ValueError(
+            f"All signals must have same length. Got: t={len(t)}, r={len(r)}, y={len(y)}, "
+            f"e={len(e)}, u={len(u)}"
+        )
 
     steady_state = y[-1]
     peak = np.max(y)
@@ -67,8 +80,13 @@ def compute_metrics(results: tuple[np.ndarray, ...]) -> Dict[str, float]:
             break
 
     # Compute tracking_error: sum of squared error multiplied by delta_t
-    squared_error = (y - r) ** 2
+    # Use the error signal e directly (e = r - y)
+    squared_error = e ** 2
     tracking_error = np.sum(squared_error) * dt
+
+    # Compute max_control_effort: maximum absolute value of control signal
+    # Use only the first control signal at index 4 (u)
+    max_control_effort = np.max(np.abs(u))
 
     metrics = {
         "steady_state": steady_state,
@@ -76,6 +94,7 @@ def compute_metrics(results: tuple[np.ndarray, ...]) -> Dict[str, float]:
         "settling_time_2pct": settling_time,
         "peak_value": peak,
         "tracking_error": tracking_error,
+        "max_control_effort": max_control_effort,
     }
     
     return metrics
