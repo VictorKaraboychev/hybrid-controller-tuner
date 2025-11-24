@@ -22,15 +22,14 @@ optimization_params = OptimizationParameters(
     max_iterations=400,  # Maximum iterations for optimization
     de_tol=0.001,  # Convergence tolerance (0.0 to disable early stopping)
     bounds=[
-        # (-25.0, 25.0),  # Kp bounds (outer)
-        # (-1.0, 1.0),  # Ki bounds (outer)
-        # (-10.0, 10.0),  # Kd bounds (outer)
-        # (0.01, 1.0),  # Sampling time bounds (outer)
-        
-        (-100.0, 100.0),  # Kp bounds (inner)
-        (-5.0, 5.0),  # Ki bounds (inner)
-        (-100.0, 100.0),  # Kd bounds (inner)
-        (0.005, 0.05),  # Sampling time bounds (inner)
+        (-25.0, 25.0),  # Kp bounds (outer)
+        (-1.0, 1.0),  # Ki bounds (outer)
+        (-10.0, 10.0),  # Kd bounds (outer)
+        (0.01, 1.0),  # Sampling time bounds (outer)
+        # (-100.0, 100.0),  # Kp bounds (inner)
+        # (-5.0, 5.0),  # Ki bounds (inner)
+        # (-100.0, 100.0),  # Kd bounds (inner)
+        # (0.005, 0.05),  # Sampling time bounds (inner)
     ],
     random_state=None,  # Random seed for reproducibility (None for random)
     verbose=True,  # Print optimization progress
@@ -43,33 +42,26 @@ save_path = "output/outer_response.png"  # Path to save response plot
 
 def main():
     System = OuterSystem
-    
+
     # Optimize the system
     params = optimize(System, optimization_params)
-    
+
     print("\n=== Optimized Parameters ===")
     print(f"params = [{','.join(f'{x:.6f}' for x in params)}]")
-    
+
     # Create system with optimized parameters and simulate
-    results = simulate_system(
-        System(params=params), 
-        Step(amplitude=0.15), 
-        10.0,
-        0.0001
-    )
+    results = simulate_system(System(params=params), Step(amplitude=0.15), 10.0, 0.0001)
     final_metrics = compute_metrics(results)
-    
+
     print("\n=== Final Metrics ===")
     for key, value in final_metrics.items():
         if np.isfinite(value):
             print(f"  {key}: {value:.4f}")
         else:
             print(f"  {key}: {value}")
-    
+
     # Plot results
-    fig, _ = plot_response(
-        results, final_metrics, save_path=str(save_path)
-    )
+    fig, _ = plot_response(results, final_metrics, save_path=str(save_path))
     print(f"\nPlot saved to {save_path}")
 
 

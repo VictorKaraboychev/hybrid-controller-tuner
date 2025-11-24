@@ -15,7 +15,9 @@ import matplotlib.pyplot as plt
 from systems.full import FullSystem
 
 # PID parameters: [Kp, Ki, Kd]
-params = np.array([-4.651588,0.000003,-5.625423,0.3,-4.270295,-0.018638,-0.024150,0.15])
+params = np.array(
+    [-4.651588, 0.000003, -5.625423, 0.3, -4.270295, -0.018638, -0.024150, 0.15]
+)
 
 print("Testing PID controller with:")
 print(f"  Kp = {params[0]}")
@@ -40,7 +42,13 @@ metrics_outer = compute_metrics(results)
 # For inner system, need to create modified results with u_outer as reference
 # results is (t, r, y_outer, e_outer, u_outer, y_inner, e_inner, u_inner)
 # For inner metrics, we want (t, r, y, e, u) where r=u_outer, y=y_inner, e=e_inner, u=u_inner
-inner_results = (results[0], results[4], results[5], results[6], results[7])  # (t, u_outer, y_inner, e_inner, u_inner)
+inner_results = (
+    results[0],
+    results[4],
+    results[5],
+    results[6],
+    results[7],
+)  # (t, u_outer, y_inner, e_inner, u_inner)
 metrics_inner = compute_metrics(inner_results)
 
 print("\n=== Final Metrics Outer System ===")
@@ -71,11 +79,11 @@ fig, axes = plot_response(
 )
 
 # Add title with parameters
-params_str = ', '.join(f'{x:.6f}' for x in params)
-fig.suptitle(f"[{params_str}]", fontsize=14, fontweight='bold')
+params_str = ", ".join(f"{x:.6f}" for x in params)
+fig.suptitle(f"[{params_str}]", fontsize=14, fontweight="bold")
 
 plt.tight_layout()
-plt.savefig(save_path, dpi=150, bbox_inches='tight')
+plt.savefig(save_path, dpi=150, bbox_inches="tight")
 print(f"Plot saved to: {save_path}")
 print("\nDisplaying plot...")
 plt.show()

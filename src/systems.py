@@ -2,6 +2,8 @@
 System Building Blocks
 
 This module provides reusable blocks for building control systems:
+- Block: Base class for all system components
+- System: Abstract base class for control systems (extends Block)
 - ContinuousTF: Continuous-time transfer function (s-domain)
 - DiscreteTF: Discrete-time transfer function (z-domain) with zero-order hold
 - Saturation: Signal saturation/limiting block
@@ -16,33 +18,71 @@ from abc import ABC, abstractmethod
 class Block(ABC):
     """
     Base class for all system blocks and systems.
-    
+
     All blocks must implement __call__(t, r) and reset() methods.
     Systems may return tuples instead of single float values.
     """
-    
+
     @abstractmethod
     def __call__(self, t: float, r: float):
         """
         Step the block with time and input signal.
-        
+
         Parameters
         ----------
         t : float
             Current time (seconds)
         r : float
             Input signal (reference/input)
-        
+
         Returns
         -------
         float or tuple
             Output signal (blocks return float, systems may return tuple)
         """
         pass
-    
+
     @abstractmethod
     def reset(self) -> None:
         """Reset the block's internal state."""
+        pass
+
+
+class System(Block):
+    """
+    Abstract base class for control systems.
+
+    Systems extend Block and add optimization-specific requirements:
+    - Must accept optimization parameters in __init__(params)
+    - Must implement cost() method for optimization
+    - Return tuples of signals from __call__(t, r)
+    """
+
+    @abstractmethod
+    def __init__(self, params: np.ndarray):
+        """
+        Initialize the system with optimization parameters.
+
+        Parameters
+        ----------
+        params : np.ndarray
+            Array of optimization parameters (e.g., controller gains, sampling times)
+        """
+        pass
+
+    @abstractmethod
+    def cost(self) -> float:
+        """
+        Compute the cost function for optimization.
+
+        This method should simulate the system and compute a cost based on
+        performance metrics. Lower cost values indicate better performance.
+
+        Returns
+        -------
+        float
+            Cost value to minimize
+        """
         pass
 
 
@@ -126,7 +166,7 @@ class ContinuousTF(Block):
             # Ensure dt is positive and reasonable
             if dt <= 0:
                 dt = 0.001  # Fallback to default if time goes backwards or same
-        
+
         self.last_time = t
 
         # Compute output: y = C*x + D*u
@@ -178,7 +218,6 @@ class ContinuousTF(Block):
         # Check if all poles have negative real parts
         # For stability: Re(pole) < 0 for all poles
         return np.all(np.real(poles) < -tol)
-
 
 
 class DiscreteTF(Block):
@@ -334,7 +373,6 @@ class DiscreteTF(Block):
         return np.all(np.abs(poles) < 1.0 - tol)
 
 
-
 class Saturation(Block):
     """
     Saturation/limiting block.
@@ -388,7 +426,6 @@ class Saturation(Block):
         pass
 
 
-
 class PID(Block):
     """
     Discrete-time PID controller block.
@@ -425,7 +462,7 @@ class PID(Block):
         # Internal state
         self.integral = 0.0  # Integral term accumulator
         self.last_error = 0.0  # Previous error for derivative
-        
+
         # For sampling control
         self.last_sample_time = -np.inf
         self.y = 0.0  # Last output value
@@ -449,24 +486,24 @@ class PID(Block):
         # Check if it's time to sample
         if t - self.last_sample_time >= self.sampling_time:
             # Time to sample - update PID controller
-            
+
             # Proportional term
             u_p = self.Kp * r
-            
+
             # Integral term: u_i[k] = u_i[k-1] + Ki * Ts * e[k]
             self.integral += self.Ki * self.sampling_time * r
             u_i = self.integral
-            
+
             # Derivative
             error_diff = r - self.last_error
             u_d = 0.0
             # Skip first sample
-            if (self.last_sample_time != -np.inf):
+            if self.last_sample_time != -np.inf:
                 u_d = self.Kd * (error_diff / self.sampling_time)
-            
+
             # Total output: u = Kp*e + Ki*integral + Kd*derivative
             self.y = u_p + u_i + u_d
-            
+
             # Update state
             self.last_error = r
             self.last_sample_time = t
@@ -478,4 +515,3 @@ class PID(Block):
         self.last_error = 0.0
         self.last_sample_time = -np.inf
         self.y = 0.0
-

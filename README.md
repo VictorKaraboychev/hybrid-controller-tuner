@@ -42,13 +42,14 @@ Required packages:
 1. **Define your control system** in `main.py` or create a new system file:
 
 ```python
-from src.systems import PID, Block, ContinuousTF, Saturation
+import numpy as np
+from src.systems import PID, System, ContinuousTF, Saturation
 from src.signals import Step
 from src.simulate_system import simulate_system
 from src.response_metrics import compute_metrics
 from src.tune_discrete_controller import OptimizationParameters, optimize
 
-class MySystem(Block):
+class MySystem(System):
     def __init__(self, params: np.ndarray):
         # PID controller: [Kp, Ki, Kd, sampling_time]
         self.pid = PID(
@@ -75,7 +76,7 @@ class MySystem(Block):
         return r, y, e, u
     
     def cost(self) -> float:
-        results = simulate_system(self, Step(amplitude=1.4), 1.0)
+        results = simulate_system(self, Step(amplitude=1.4), 1.0, dt=0.001)
         metrics = compute_metrics(results)
         return metrics["tracking_error"]
 ```
@@ -111,7 +112,7 @@ params = optimize(MySystem, optimization_params)
 from src.plotting_utils import plot_response
 
 system = MySystem(params=params)
-results = simulate_system(system, Step(amplitude=1.4), 1.0)
+results = simulate_system(system, Step(amplitude=1.4), 1.0, dt=0.001)
 metrics = compute_metrics(results)
 plot_response(results, metrics, save_path="output/response.png")
 ```
@@ -120,18 +121,34 @@ plot_response(results, metrics, save_path="output/response.png")
 
 ### Block-Based Design
 
-All system components extend the `Block` base class:
+All system components extend the `Block` base class. Control systems should extend the `System` class, which extends `Block` and adds optimization-specific requirements:
 
 ```python
 class Block(ABC):
     @abstractmethod
-    def __call__(self, t: float, r: float) -> float:
-        """Step the block with time t and input r, return output."""
+    def __call__(self, t: float, r: float):
+        """Step the block with time t and input r, return output.
+        
+        Blocks return float, systems may return tuple of signals.
+        """
         pass
     
     @abstractmethod
     def reset(self):
         """Reset internal state."""
+        pass
+
+class System(Block):
+    """Abstract base class for control systems."""
+    
+    @abstractmethod
+    def __init__(self, params: np.ndarray):
+        """Initialize with optimization parameters."""
+        pass
+    
+    @abstractmethod
+    def cost(self) -> float:
+        """Compute cost function for optimization."""
         pass
 ```
 
@@ -144,10 +161,10 @@ class Block(ABC):
 - **`DiscreteTF`**: Discrete-time transfer functions (z-domain)
   - Handles zero-order hold (ZOH) automatically
   - Updates only at discrete sample times
+  - Parameters: `num`, `den` (polynomial coefficients), `sampling_time`
 
 - **`PID`**: PID controller with direct difference equations
   - Parameters: `Kp`, `Ki`, `Kd`, `sampling_time`
-  - No derivative filter (simplified implementation)
 
 - **`Saturation`**: Signal limiting block
   - Parameters: `min_val`, `max_val`
@@ -159,17 +176,17 @@ Signal classes extend the `Signal` base class:
 ```python
 from src.signals import Step, Ramp, Sinusoid, SquareWave, Constant
 
-# Step signal
-r_func = Step(amplitude=0.15)
+# Step signal (starts at t0, default 0.0)
+r_func = Step(amplitude=0.15, t0=0.0)
 
-# Ramp signal
-r_func = Ramp(slope=0.1, offset=0.0)
+# Ramp signal (starts at t0, default 0.0)
+r_func = Ramp(slope=0.1, t0=0.0)
 
 # Sinusoid
 r_func = Sinusoid(amplitude=1.0, frequency=1.0, phase=0.0)
 
 # Square wave
-r_func = SquareWave(amplitude=1.0, frequency=1.0, duty_cycle=0.5)
+r_func = SquareWave(amplitude=1.0, frequency=1.0, duty_cycle=0.5, phase=0.0)
 
 # Constant
 r_func = Constant(value=0.5)
@@ -184,7 +201,7 @@ results = simulate_system(
     system, 
     Step(amplitude=0.15), 
     t_end=10.0, 
-    dt=0.001,
+    dt=0.001,  # Optional: if None, uses t_end / 1000
     dt_mode='fixed'  # Default
 )
 ```
@@ -198,11 +215,11 @@ results = simulate_system(
     system,
     Step(amplitude=0.15),
     t_end=10.0,
-    dt=0.001,
+    dt=0.001,  # Initial timestep (optional: defaults to 0.001 in variable mode)
     dt_mode='variable',
-    adaptive_tolerance=1.0,  # Higher = more aggressive about increasing dt
-    max_dt=0.1,              # Maximum timestep
-    min_dt=1e-6              # Minimum timestep
+    adaptive_tolerance=0.01,  # Higher = more aggressive about increasing dt (default: 0.01)
+    max_dt=0.1,              # Maximum timestep (default: 0.1)
+    min_dt=1e-5              # Minimum timestep (default: 1e-5)
 )
 ```
 
@@ -221,7 +238,7 @@ results = simulate_system(
 `simulate_system` returns a tuple of numpy arrays:
 
 ```python
-results = simulate_system(system, r_func, t_end, dt)
+results = simulate_system(system, r_func, t_end, dt=0.001)
 # results = (t, signal_1, signal_2, ..., signal_n)
 
 # For a system returning (r, y, e, u):
@@ -235,13 +252,17 @@ The tuple format is consistent: `(t, r, y, e, ...other_signals)` where:
 - `e`: Error signal array
 - Additional signals follow (control signals, etc.)
 
+**Note:** The `dt` parameter is optional. If not provided:
+- Fixed mode: defaults to `t_end / 1000`
+- Variable mode: defaults to `0.001`
+
 ## System Definition
 
 ### Creating a System Class
 
 Your system class must:
 
-1. Extend `Block`
+1. Extend `System` (which extends `Block`)
 2. Implement `__init__(self, params: np.ndarray)` - takes optimization parameters
 3. Implement `__call__(self, t: float, r: float)` - returns tuple of signals
 4. Implement `reset(self)` - resets all block states
@@ -250,7 +271,13 @@ Your system class must:
 Example:
 
 ```python
-class MySystem(Block):
+import numpy as np
+from src.systems import PID, System, ContinuousTF, Saturation
+from src.signals import Step
+from src.simulate_system import simulate_system
+from src.response_metrics import compute_metrics
+
+class MySystem(System):
     def __init__(self, params: np.ndarray):
         # Initialize blocks from params
         self.controller = PID(
@@ -278,7 +305,7 @@ class MySystem(Block):
     
     def cost(self) -> float:
         # Simulate and compute cost
-        results = simulate_system(self, Step(amplitude=1.0), 5.0)
+        results = simulate_system(self, Step(amplitude=1.0), 5.0, dt=0.001)
         metrics = compute_metrics(results)
         # Return cost (e.g., tracking error)
         return metrics["tracking_error"]
@@ -289,32 +316,55 @@ class MySystem(Block):
 Build cascaded control loops:
 
 ```python
-class CascadedSystem(Block):
+import numpy as np
+from src.systems import PID, System, ContinuousTF, Saturation
+from src.signals import Step
+from src.simulate_system import simulate_system
+from src.response_metrics import compute_metrics
+
+class CascadedSystem(System):
     def __init__(self, params: np.ndarray):
         # Outer loop controller
         self.outer_pid = PID(Kp=params[0], Ki=params[1], Kd=params[2], 
                             sampling_time=params[3])
-        self.outer_plant = ContinuousTF(...)
+        self.outer_plant = ContinuousTF(num=[1.0], den=[1.0, 0.0, 0.0])
+        self.outer_sat = Saturation(min_val=-10.0, max_val=10.0)
         
         # Inner loop controller
         self.inner_pid = PID(Kp=params[4], Ki=params[5], Kd=params[6],
                             sampling_time=params[7])
-        self.inner_plant = ContinuousTF(...)
+        self.inner_plant = ContinuousTF(num=[1.0], den=[0.1, 1.0, 0.0])
+        self.inner_sat = Saturation(min_val=-5.0, max_val=5.0)
+    
+    def reset(self):
+        self.outer_pid.reset()
+        self.outer_plant.reset()
+        self.outer_sat.reset()
+        self.inner_pid.reset()
+        self.inner_plant.reset()
+        self.inner_sat.reset()
     
     def __call__(self, t: float, r: float):
         # Outer loop
         e_outer = r - self.outer_plant.y
         u_outer = self.outer_pid(t, e_outer)
+        u_outer = self.outer_sat(t, u_outer)
         
         # Inner loop (outer output is inner reference)
         e_inner = u_outer - self.inner_plant.y
         u_inner = self.inner_pid(t, e_inner)
+        u_inner = self.inner_sat(t, u_inner)
         y_inner = self.inner_plant(t, u_inner)
         
         # Outer plant uses inner output
         y_outer = self.outer_plant(t, y_inner)
         
         return r, y_outer, e_outer, u_outer, y_inner, e_inner, u_inner
+    
+    def cost(self) -> float:
+        results = simulate_system(self, Step(amplitude=0.15), 5.0, dt=0.001)
+        metrics = compute_metrics(results)
+        return metrics["tracking_error"]
 ```
 
 ## Optimization
@@ -329,6 +379,7 @@ optimization_params = OptimizationParameters(
     population=20,              # Population size (larger = better but slower)
     max_iterations=1000,        # Maximum iterations
     de_tol=0.000001,           # Convergence tolerance (0.0 to disable)
+    de_atol=1e-8,              # Absolute convergence tolerance
     bounds=[                    # Parameter bounds (one per parameter)
         (-100.0, 100.0),
         (-5.0, 5.0),
@@ -338,6 +389,9 @@ optimization_params = OptimizationParameters(
     random_state=42,            # Random seed (None for random)
     verbose=True,               # Print progress
     workers=-1,                 # Number of parallel workers (-1 = all CPUs)
+    mutation=(0.75, 1.5),      # Mutation constant (tuple for dithering)
+    recombination=0.7,         # Recombination constant (crossover probability)
+    strategy='best1bin',        # Mutation strategy: 'best1bin', 'rand1bin', etc.
 )
 ```
 
@@ -358,18 +412,28 @@ The `cost()` method in your system class defines what to optimize. Common approa
 
 ```python
 def cost(self) -> float:
-    results = simulate_system(self, Step(amplitude=1.0), 5.0)
+    results = simulate_system(self, Step(amplitude=1.0), 5.0, dt=0.001)
     metrics = compute_metrics(results)
     
     # Option 1: Minimize tracking error
     return metrics["tracking_error"]
     
-    # Option 2: Weighted combination
+    # Option 2: Weighted combination with penalties
     return (
         metrics["tracking_error"] +
         10.0 * max(0, metrics["percent_overshoot"] - 5.0) +
-        5.0 * max(0, metrics["settling_time_2pct"] - 1.0)
+        5.0 * max(0, metrics["settling_time_2pct"] - 1.0) +
+        2.0 * max(0, metrics["max_control_effort"] - 10.0)
     )
+    
+    # Option 3: Penalty-based approach (common in examples)
+    # Only penalize if metrics exceed thresholds
+    control_effort_penalty = max(0.0, metrics["max_control_effort"] - 5.0)
+    overshoot_penalty = max(0.0, metrics["percent_overshoot"] - 5.0)
+    settling_time_penalty = max(0.0, metrics["settling_time_2pct"] - 1.0)
+    steady_state_penalty = max(0.0, abs(metrics["steady_state"] - 1.0))
+    
+    return control_effort_penalty + overshoot_penalty + settling_time_penalty + steady_state_penalty
 ```
 
 ## Performance Metrics
@@ -381,17 +445,21 @@ Available metrics from `compute_metrics()`:
 - `settling_time_2pct`: 2% settling time (seconds)
 - `peak_value`: Peak output value
 - `tracking_error`: Sum of squared errors × dt
+- `max_control_effort`: Maximum absolute value of control signal
+
+**Note:** `compute_metrics()` requires at least 5 arrays: `(t, r, y, e, u, ...)`
 
 ```python
 from src.response_metrics import compute_metrics
 
-results = simulate_system(system, r_func, t_end, dt)
+results = simulate_system(system, r_func, t_end, dt=0.001)
 metrics = compute_metrics(results)
 
 print(f"Steady state: {metrics['steady_state']}")
 print(f"Overshoot: {metrics['percent_overshoot']}%")
 print(f"Settling time: {metrics['settling_time_2pct']}s")
 print(f"Tracking error: {metrics['tracking_error']}")
+print(f"Max control effort: {metrics['max_control_effort']}")
 ```
 
 ## Visualization
@@ -399,7 +467,7 @@ print(f"Tracking error: {metrics['tracking_error']}")
 ```python
 from src.plotting_utils import plot_response
 
-results = simulate_system(system, r_func, t_end, dt)
+results = simulate_system(system, r_func, t_end, dt=0.001)
 metrics = compute_metrics(results)
 
 fig, axes = plot_response(
@@ -413,6 +481,10 @@ The plot shows:
 1. **Output Response**: With reference, steady-state, 2% settling band, peak annotation
 2. **Error Signal**: Error over time
 3. **Control Signals**: Any additional signals beyond (t, r, y, e)
+
+### Example Output
+
+![System Response](response.png)
 
 ## Examples
 

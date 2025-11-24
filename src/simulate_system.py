@@ -1,9 +1,10 @@
 import numpy as np
 
+
 def simulate_system(
-    system, 
-    r_func, 
-    t_end: float, 
+    system,
+    r_func,
+    t_end: float,
     dt: float | None = None,
     dt_mode: str = "fixed",
     min_dt: float = 1e-5,
@@ -36,7 +37,7 @@ def simulate_system(
     adaptive_tolerance : float, optional
         Tolerance for adaptive timestep control. Higher values allow larger timesteps
         when signals are changing slowly. Default is 0.01.
-    
+
     Returns
     -------
     tuple of np.ndarray
@@ -51,17 +52,17 @@ def simulate_system(
     if not isinstance(result_0, tuple):
         result_0 = (result_0,)
     num_signals = len(result_0)
-    
+
     # Set default dt if not provided
     if dt is None:
         dt = t_end / 1000 if dt_mode == "fixed" else 0.001
-    
+
     if dt_mode == "fixed":
         # Fixed timestep mode - pre-allocate arrays
         n = int(t_end / dt) + 1
         t = np.arange(n) * dt
         signals = [np.zeros(n) for _ in range(num_signals)]
-        
+
         # Reset system state
         system.reset()
 
@@ -71,101 +72,109 @@ def simulate_system(
 
             # Get reference signal from function
             r = r_func(t_i)
-            
+
             # Call system with time and reference signal
             result = system(t_i, r)
-            
+
             # Handle both single value and tuple returns
             if not isinstance(result, tuple):
                 result = (result,)
-            
+
             # Store each signal value directly in pre-allocated array
             for j, value in enumerate(result):
                 signals[j][i] = value
-        
+
         # Return tuple: (t, signal_1, signal_2, ..., signal_n)
         return (t, *signals)
-    
+
     else:
         # Variable/adaptive timestep mode
         # Use dynamic lists since we don't know the final size
         t_list = []
         signals_list = [[] for _ in range(num_signals)]
-        
+
         # Reset system state
         system.reset()
-        
+
         # Initialize adaptive timestep parameters
         current_dt = dt
         t_current = 0.0
         prev_signals = None
         prev_dt = dt
         stable_steps = 0  # Count consecutive stable steps
-        
+
         # Growth/decay factors for timestep adjustment - be very aggressive
-        growth_factor = 2.5  # Increase dt by 150% when signals are slow (very aggressive)
-        decay_factor = 0.95  # Decrease dt by only 5% when signals are fast (minimal decrease)
+        growth_factor = (
+            2.5  # Increase dt by 150% when signals are slow (very aggressive)
+        )
+        decay_factor = (
+            0.95  # Decrease dt by only 5% when signals are fast (minimal decrease)
+        )
         stable_threshold = 3  # Number of stable steps before increasing dt (very low)
-        
+
         # Only check adaptation every N steps to reduce overhead
         adaptation_check_interval = 3  # Check more frequently but with less overhead
         step_count = 0
-        
+
         # Running average of signal changes for smoother adaptation
         change_history = []
         history_size = 5  # Smaller history for faster adaptation
-        
+
         while t_current < t_end:
             # Ensure we don't overshoot t_end
             if t_current + current_dt > t_end:
                 current_dt = t_end - t_current
                 if current_dt < min_dt:
                     break
-            
+
             # Get reference signal from function
             r = r_func(t_current)
-            
+
             # Call system with time and reference signal
             result = system(t_current, r)
-            
+
             # Handle both single value and tuple returns
             if not isinstance(result, tuple):
                 result = (result,)
-            
+
             # Store current time and signals
             t_list.append(t_current)
             for j, value in enumerate(result):
                 signals_list[j].append(value)
-            
+
             # Update timestep based on signal changes (only check periodically)
             step_count += 1
             if prev_signals is not None and step_count >= adaptation_check_interval:
                 step_count = 0  # Reset counter
-                
+
                 # Compute maximum relative change across all signals
                 # Use relative change (normalized by signal magnitude) to handle different scales
                 max_relative_change = 0.0
-                
+
                 for j in range(num_signals):
                     signal_prev = prev_signals[j]
                     signal_curr = result[j]
-                    
+
                     # Compute relative change (fractional change per unit time)
                     signal_magnitude = max(abs(signal_prev), abs(signal_curr), 1e-10)
                     absolute_change = abs(signal_curr - signal_prev)
                     # Normalize by magnitude and time to get rate of change
                     relative_change = (absolute_change / signal_magnitude) / prev_dt
-                    
+
                     max_relative_change = max(max_relative_change, relative_change)
-                
+
                 # Store in history for smoother adaptation
                 change_history.append(max_relative_change)
                 if len(change_history) > history_size:
                     change_history.pop(0)
-                
+
                 # Use average of recent changes for more stable adaptation
-                avg_change = np.mean(change_history) if len(change_history) >= history_size else 0.0
-                
+                avg_change = (
+                    np.mean(change_history)
+                    if len(change_history) >= history_size
+                    else 0.0
+                )
+
                 # Only adapt if we have enough history (but start adapting sooner)
                 if len(change_history) >= max(3, history_size // 2):
                     # Very lenient thresholds - be aggressive about increasing dt
@@ -194,17 +203,17 @@ def simulate_system(
                                 current_dt = min(new_dt, max_dt)
                                 stable_steps = 0
                         # For other cases, just maintain - don't decrease
-            
+
             # Store current signals and timestep for next iteration
             prev_signals = tuple(result)
             prev_dt = current_dt
-            
+
             # Advance time
             t_current += current_dt
-        
+
         # Convert lists to numpy arrays
         t = np.array(t_list)
         signals = [np.array(sig_list) for sig_list in signals_list]
-        
+
         # Return tuple: (t, signal_1, signal_2, ..., signal_n)
         return (t, *signals)

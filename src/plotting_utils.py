@@ -53,7 +53,7 @@ def plot_response(
     r = results[1]
     y = results[2]
     e = results[3]
-    
+
     # Get additional signals if present
     if len(results) > 4:
         other_signals = list(results[4:])
@@ -63,7 +63,7 @@ def plot_response(
     # Create subplots: output, error, and one for each additional signal
     n_subplots = 2 + len(other_signals)  # output, error, plus additional signals
     fig, axes = plt.subplots(n_subplots, 1, figsize=(10, 3.5 * n_subplots))
-    
+
     # Handle single subplot case
     if n_subplots == 1:
         axes = [axes]
@@ -117,7 +117,9 @@ def plot_response(
     # Plot additional signals as "Control signal {n}"
     for idx, signal in enumerate(other_signals):
         ax_idx = 2 + idx
-        axes[ax_idx].plot(t, signal, "g-", linewidth=2, label=f"Control signal {idx + 1}")
+        axes[ax_idx].plot(
+            t, signal, "g-", linewidth=2, label=f"Control signal {idx + 1}"
+        )
         axes[ax_idx].grid(True, alpha=0.3)
         axes[ax_idx].set_xlabel("Time (s)")
         axes[ax_idx].set_ylabel(f"Control signal {idx + 1}")

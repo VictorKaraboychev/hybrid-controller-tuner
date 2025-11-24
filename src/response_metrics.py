@@ -12,7 +12,7 @@ import numpy as np
 def compute_metrics(results: tuple[np.ndarray, ...]) -> Dict[str, float]:
     """
     Extract steady-state, overshoot, settling-time, peak, tracking_error, and max_control_effort metrics.
-    
+
     Parameters
     ----------
     results : tuple of np.ndarray
@@ -81,7 +81,7 @@ def compute_metrics(results: tuple[np.ndarray, ...]) -> Dict[str, float]:
 
     # Compute tracking_error: sum of squared error multiplied by delta_t
     # Use the error signal e directly (e = r - y)
-    squared_error = e ** 2
+    squared_error = e**2
     tracking_error = np.sum(squared_error) * dt
 
     # Compute max_control_effort: maximum absolute value of control signal
@@ -96,5 +96,5 @@ def compute_metrics(results: tuple[np.ndarray, ...]) -> Dict[str, float]:
         "tracking_error": tracking_error,
         "max_control_effort": max_control_effort,
     }
-    
+
     return metrics
