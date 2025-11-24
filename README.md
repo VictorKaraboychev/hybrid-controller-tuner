@@ -157,6 +157,7 @@ class System(Block):
 - **`ContinuousTF`**: Continuous-time transfer functions (s-domain)
   - Automatically computes `dt` from time difference
   - Uses Euler integration for state-space representation
+  - Parameters: `num`, `den` (polynomial coefficients)
 
 - **`DiscreteTF`**: Discrete-time transfer functions (z-domain)
   - Handles zero-order hold (ZOH) automatically
